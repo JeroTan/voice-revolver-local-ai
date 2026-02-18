@@ -50,6 +50,10 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ## History Log
 
+### 2026-02-18 | Session Protocol
+- **Topic:** Session memory protocol established
+- **Decision:** Must read AGENT_MEMORY.md + ./docs/* at start of every session, and update memory with any important changes
+
 ### 2026-02-18 | Git Setup
 - **Topic:** Created git branches and documented remote
 - **Decision:** Created three branches: main, staging, development
@@ -73,8 +77,8 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ## Working Guidelines
 
-- Update AGENT_MEMORY.md with important highlights after each session
-- Check AGENT_MEMORY.md at the start of each session
+- **ALWAYS update AGENT_MEMORY.md with any important change** (file edits, deletions, architecture updates, decisions)
+- **Read AGENT_MEMORY.md + all ./docs/* files at the START of every session**
 - README.md contains base project information/guides
 
 ---
