@@ -1,0 +1,22 @@
+# Voice Revolver AI - Requirements
+# Core dependencies
+
+# AI/ML
+torch>=2.0.0
+demucs>=4.0.0
+
+# Voice conversion
+openvoice @ git+https://github.com/myshell-ai/OpenVoice.git
+
+# Audio processing
+pydub>=0.25.1
+numpy>=1.24.0
+
+# UI
+PyQt6>=6.5.0
+
+# Utilities
+tqdm>=4.65.0
+
+# Development/Build
+pyinstaller>=6.0.0
