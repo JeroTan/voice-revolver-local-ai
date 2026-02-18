@@ -23,7 +23,8 @@ class ComputeController:
         try:
             import torch
             self._has_cuda = torch.cuda.is_available()
-        except ImportError:
+        except (ImportError, OSError, Exception):
+            # Handle torch import errors (DLL issues on Windows, not installed, etc.)
             self._has_cuda = False
     
     @property

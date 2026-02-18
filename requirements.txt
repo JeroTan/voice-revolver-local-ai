@@ -1,22 +1,39 @@
 # Voice Revolver AI - Requirements
 # Core dependencies
 
-# AI/ML
-torch>=2.0.0
-demucs>=4.0.0
+# Python Version: 3.11.x required (NOT 3.14 - has PyTorch DLL issues)
+# To create venv: py -3.11 -m venv venv
+# To activate: .\venv\Scripts\Activate.ps1
+
+# NumPy - MUST be <2.0 for PyTorch 2.1.2 compatibility
+numpy<2.0
+
+# AI/ML - PyTorch 2.1.2 LTS (stable on Windows with Python 3.11)
+--index-url https://download.pytorch.org/whl/cpu
+torch==2.1.2
+torchaudio==2.1.2
+demucs
 
 # Voice conversion
-openvoice @ git+https://github.com/myshell-ai/OpenVoice.git
+git+https://github.com/myshell-ai/OpenVoice.git
+git+https://github.com/myshell-ai/MeloTTS.git
 
 # Audio processing
-pydub>=0.25.1
-numpy>=1.24.0
+pydub
+soundfile
+librosa
+
+# FFmpeg auto-download
+static-ffmpeg
+
+# HTTP downloads
+requests
 
 # UI
-PyQt6>=6.5.0
+PyQt6
 
 # Utilities
-tqdm>=4.65.0
+tqdm
 
 # Development/Build
-pyinstaller>=6.0.0
+pyinstaller

@@ -6,7 +6,6 @@ Handles saving and loading .vra project files
 import json
 from pathlib import Path
 from typing import Optional
-from dataclasses import asdict
 
 from ..domain import (
     ProjectData,
@@ -29,14 +28,18 @@ class ProjectService:
         """Create a new empty project"""
         return ProjectData()
     
-    def save_project(self, project: ProjectData, file_path: Path) -> tuple[bool, Optional[ErrorCode], str]:
-        """Save project to .vra file"""
+    def save_project(self, project: ProjectData, file_path: Path) -> bool:
+        """
+        Save project to .vra file.
+        Returns True on success, raises exception on failure.
+        """
         try:
             # Update timestamp
             from datetime import datetime
             project.updated_at = datetime.now().isoformat()
             
-            # Convert to JSON
+            # Convert to JSON using dataclasses.asdict
+            from dataclasses import asdict
             project_dict = asdict(project)
             
             # Handle VoiceConversionParams nested object
@@ -47,19 +50,22 @@ class ProjectService:
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(project_dict, f, indent=2, ensure_ascii=False)
             
-            return True, None, f"Project saved to {file_path}"
+            return True
             
         except Exception as e:
-            return False, ErrorCode.FILE_WRITE_FAILED, str(e)
+            raise e
     
-    def load_project(self, file_path: Path) -> tuple[Optional[ProjectData], Optional[ErrorCode], str]:
-        """Load project from .vra file"""
+    def load_project(self, file_path: Path) -> ProjectData:
+        """
+        Load project from .vra file.
+        Returns ProjectData on success, raises exception on failure.
+        """
         try:
             if not file_path.exists():
-                return None, ErrorCode.FILE_NOT_FOUND, "Project file not found"
+                raise FileNotFoundError(f"Project file not found: {file_path}")
             
             if file_path.suffix.lower() != self.PROJECT_FILE_EXTENSION:
-                return None, ErrorCode.UNSUPPORTED_FORMAT, "Invalid project file format"
+                raise ValueError("Invalid project file format")
             
             with open(file_path, 'r', encoding='utf-8') as f:
                 project_dict = json.load(f)
@@ -72,12 +78,10 @@ class ProjectService:
             project = ProjectData(**project_dict)
             project.voice_params = voice_params
             
-            return project, None, "Project loaded successfully"
+            return project
             
-        except json.JSONDecodeError as e:
-            return None, ErrorCode.FILE_NOT_FOUND, f"Invalid project file: {e}"
         except Exception as e:
-            return None, ErrorCode.FILE_WRITE_FAILED, str(e)
+            raise e
     
     def validate_project_for_export(self, project: ProjectData) -> tuple[bool, str]:
         """Validate project has required data for export"""

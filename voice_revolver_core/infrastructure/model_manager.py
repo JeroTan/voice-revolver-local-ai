@@ -4,9 +4,13 @@ Manages AI model downloading and caching
 """
 
 import os
+import zipfile
 from pathlib import Path
 from typing import Optional, Callable
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ModelManager:
@@ -15,13 +19,11 @@ class ModelManager:
     Auto-downloads models on first run, caches for offline use.
     """
     
-    # Model URLs (to be configured with actual URLs)
-    DEMUCS_MODEL_URL = "https://dl.fbaipublicfiles.com/demucs/hdemucs_mix.yaml"
-    DEMUCS_MODEL_PATHS = [
-        "e98347006d8a8437e7102a539b92bbe6d891adab.th",  # htdemucs_ft
-    ]
+    # OpenVoice V2 checkpoint URLs
+    OPENVOICE_V2_CHECKPOINT_URL = "https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip"
     
-    OPENVOICE_MODEL_URL = "https://github.com/myshell-ai/OpenVoice/releases/download/v2.0.0/"
+    # Demucs model info (auto-downloaded by demucs package)
+    DEMUCS_MODEL_NAME = "htdemucs_ft"
     
     def __init__(self, models_path: Path):
         self._models_path = models_path
@@ -29,11 +31,30 @@ class ModelManager:
         
         self._downloaded_models = set()
         self._download_callback: Optional[Callable[[str, float], None]] = None
+        
+        # Check what's already cached
+        self._check_existing_cache()
+    
+    def _check_existing_cache(self):
+        """Check what models are already cached"""
+        # Check OpenVoice checkpoints
+        openvoice_dir = self._models_path / "checkpoints_v2"
+        if openvoice_dir.exists() and (openvoice_dir / "converter").exists():
+            self._downloaded_models.add("openvoice")
+            logger.info("OpenVoice V2 checkpoints found in cache")
+        
+        # Demucs models are downloaded by the package, we just check if package is available
+        self._downloaded_models.add("demucs")
     
     @property
     def models_path(self) -> Path:
         """Get models directory path"""
         return self._models_path
+    
+    @property
+    def openvoice_path(self) -> Path:
+        """Get OpenVoice checkpoints directory"""
+        return self._models_path / "checkpoints_v2"
     
     def set_download_callback(self, callback: Callable[[str, float], None]):
         """Set callback for download progress"""
@@ -45,9 +66,10 @@ class ModelManager:
     
     def get_model_path(self, model_name: str) -> Optional[Path]:
         """Get path to cached model"""
-        model_path = self._models_path / model_name
-        if model_path.exists():
-            return model_path
+        if model_name == "openvoice":
+            return self.openvoice_path
+        elif model_name == "demucs":
+            return self._models_path / "demucs"
         return None
     
     async def download_all_models(
@@ -59,9 +81,11 @@ class ModelManager:
         Returns: (success, error_message)
         """
         models = [
-            ("demucs", self._download_demucs_models),
             ("openvoice", self._download_openvoice_models),
         ]
+        
+        # Demucs is handled by the demucs package - just mark as available
+        self._downloaded_models.add("demucs")
         
         for model_name, download_func in models:
             try:
@@ -74,28 +98,71 @@ class ModelManager:
         
         return True, None
     
-    async def _download_demucs_models(
-        self, 
-        progress_callback: Optional[Callable[[str, float], None]] = None
-    ) -> tuple[bool, Optional[str]]:
-        """Download Demucs models"""
-        # Simulated download - actual implementation would use urllib or requests
-        for i, model_file in enumerate(self.DEMUCS_MODEL_PATHS):
-            self._notify_progress(f"demucs_{i}", (i + 1) / len(self.DEMUCS_MODEL_PATHS), progress_callback)
-            await asyncio.sleep(0.5)  # Simulate download time
-        
-        return True, None
-    
     async def _download_openvoice_models(
         self, 
         progress_callback: Optional[Callable[[str, float], None]] = None
     ) -> tuple[bool, Optional[str]]:
-        """Download OpenVoice models"""
-        # Simulated download - actual implementation would download checkpoint
-        self._notify_progress("openvoice", 0.5, progress_callback)
-        await asyncio.sleep(0.5)
+        """
+        Download OpenVoice V2 checkpoints from myshell S3.
+        """
+        import requests
         
-        return True, None
+        self._notify_progress("openvoice", 0.0, progress_callback)
+        
+        # Check if already downloaded
+        openvoice_dir = self.openvoice_path
+        if (openvoice_dir / "converter").exists() and (openvoice_dir / "base_speakers").exists():
+            logger.info("OpenVoice V2 already cached")
+            self._notify_progress("openvoice", 1.0, progress_callback)
+            return True, None
+        
+        # Create temp download path
+        zip_path = self._models_path / "checkpoints_v2.zip"
+        
+        try:
+            # Download with progress tracking
+            response = requests.get(self.OPENVOICE_V2_CHECKPOINT_URL, stream=True)
+            response.raise_for_status()
+            
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            
+            with open(zip_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            progress = downloaded / total_size
+                            self._notify_progress("openvoice", progress * 0.8, progress_callback)
+            
+            # Extract zip
+            self._notify_progress("openvoice", 0.85, progress_callback)
+            
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(self._models_path)
+            
+            # Rename folder to checkpoints_v2 if needed
+            extracted_dir = self._models_path / "checkpoints_v2"
+            if not extracted_dir.exists():
+                # Check if it was extracted with different name
+                for item in self._models_path.iterdir():
+                    if item.is_dir() and "checkpoints" in item.name.lower():
+                        item.rename(self._models_path / "checkpoints_v2")
+                        break
+            
+            # Clean up zip
+            zip_path.unlink(missing_ok=True)
+            
+            self._notify_progress("openvoice", 1.0, progress_callback)
+            logger.info("OpenVoice V2 checkpoints downloaded successfully")
+            return True, None
+            
+        except Exception as e:
+            logger.error(f"Failed to download OpenVoice V2: {e}")
+            # Clean up partial download
+            zip_path.unlink(missing_ok=True)
+            return False, str(e)
     
     def _notify_progress(
         self, 
@@ -120,13 +187,17 @@ class ModelManager:
         """Clear all cached models, return count deleted"""
         count = 0
         if self._models_path.exists():
-            for file in self._models_path.iterdir():
-                if file.is_file():
-                    try:
-                        file.unlink()
+            for item in self._models_path.iterdir():
+                try:
+                    if item.is_file():
+                        item.unlink()
                         count += 1
-                    except Exception:
-                        pass
+                    elif item.is_dir():
+                        import shutil
+                        shutil.rmtree(item)
+                        count += 1
+                except Exception:
+                    pass
         
         self._downloaded_models.clear()
         return count

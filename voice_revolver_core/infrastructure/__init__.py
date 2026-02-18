@@ -3,12 +3,8 @@ Voice Revolver Core - Infrastructure Layer
 External integrations and implementations
 """
 
-from .compute_controller import ComputeController
-from .model_manager import ModelManager
-from .ffmpeg_checker import FFmpegChecker
+# Note: Import these modules directly when needed to avoid PyTorch DLL issues:
+# from voice_revolver_core.infrastructure.demucs_wrapper import DemucsWrapper
+# from voice_revolver_core.infrastructure.openvoice_wrapper import OpenVoiceWrapper
 
-__all__ = [
-    'ComputeController',
-    'ModelManager',
-    'FFmpegChecker',
-]
+__all__ = []

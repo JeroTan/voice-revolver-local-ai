@@ -26,11 +26,13 @@ from .application import (
     ProjectService,
 )
 
-from .infrastructure import (
-    ComputeController,
-    ModelManager,
-    FFmpegChecker,
-)
+# Infrastructure imports are done lazily to avoid PyTorch DLL issues
+# Import directly from specific modules when needed:
+# from voice_revolver_core.infrastructure.demucs_wrapper import DemucsWrapper
+# from voice_revolver_core.infrastructure.openvoice_wrapper import OpenVoiceWrapper
+# from voice_revolver_core.infrastructure.compute_controller import ComputeController
+# from voice_revolver_core.infrastructure.model_manager import ModelManager
+# from voice_revolver_core.infrastructure.ffmpeg_checker import FFmpegChecker
 
 __version__ = "1.0.0"
 
@@ -55,11 +57,6 @@ __all__ = [
     # Application
     'VoiceReplacementService',
     'ProjectService',
-    
-    # Infrastructure
-    'ComputeController',
-    'ModelManager',
-    'FFmpegChecker',
     
     # Version
     '__version__',

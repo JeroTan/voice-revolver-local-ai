@@ -9,21 +9,25 @@ import subprocess
 import shutil
 from pathlib import Path
 from typing import Optional, Callable
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class FFmpegChecker:
     """
     Infrastructure component for FFmpeg management.
-    Checks availability, auto-downloads if missing.
+    Checks availability, auto-downloads if missing using static-ffmpeg.
     """
     
     def __init__(self, app_data_path: Path):
         self._app_data_path = app_data_path
         self._ffmpeg_path: Optional[Path] = None
         self._ffprobe_path: Optional[Path] = None
+        self._version: Optional[str] = None
     
     def is_available(self) -> bool:
-        """Check if FFmpeg is available"""
+        """Check if FFmpeg is available on system PATH"""
         return shutil.which("ffmpeg") is not None
     
     async def ensure_available(
@@ -32,20 +36,30 @@ class FFmpegChecker:
     ) -> tuple[bool, Optional[str]]:
         """
         Ensure FFmpeg is available, download if not.
+        Uses static-ffmpeg for auto-download.
         Returns: (success, error_message)
         """
+        # First check system FFmpeg
         if self.is_available():
             self._ffmpeg_path = Path(shutil.which("ffmpeg"))
             self._ffprobe_path = Path(shutil.which("ffprobe"))
+            self._version = self._get_version()
+            logger.info(f"Using system FFmpeg: {self._ffmpeg_path}")
             return True, None
         
-        # Try to use bundled FFmpeg
+        # Check for bundled FFmpeg in app data
         bundled = self._get_bundled_ffmpeg()
-        if bundled:
+        if bundled and bundled.exists():
             self._ffmpeg_path = bundled
+            ffprobe_name = "ffprobe.exe" if sys.platform == "win32" else "ffprobe"
+            ffprobe_candidate = bundled.parent / ffprobe_name
+            if ffprobe_candidate.exists():
+                self._ffprobe_path = ffprobe_candidate
+            self._version = self._get_version()
+            logger.info(f"Using bundled FFmpeg: {self._ffmpeg_path}")
             return True, None
         
-        # Need to download
+        # Download using static-ffmpeg
         return await self._download_ffmpeg(download_callback)
     
     def _get_bundled_ffmpeg(self) -> Optional[Path]:
@@ -66,42 +80,66 @@ class FFmpegChecker:
         download_callback: Optional[Callable[[float], None]] = None
     ) -> tuple[bool, Optional[str]]:
         """
-        Download FFmpeg.
-        Note: This is a placeholder - actual implementation would download
-        FFmpeg binaries for the target platform.
+        Download FFmpeg using static-ffmpeg library.
         """
         import asyncio
         
-        # Simulated download
-        for i in range(10):
-            await asyncio.sleep(0.2)
+        try:
+            from static_ffmpeg import run
+            
+            logger.info("Downloading FFmpeg (static-ffmpeg)...")
+            
+            # Run in thread to avoid blocking
+            loop = asyncio.get_event_loop()
+            
+            def _download():
+                # This will download FFmpeg if not present and return paths
+                ffmpeg_path, ffprobe_path = run.get_or_fetch_platform_executables_else_raise()
+                return ffmpeg_path, ffprobe_path
+            
+            # Run download in executor to not block
+            result = await loop.run_in_executor(None, _download)
+            ffmpeg_path_str, ffprobe_path_str = result
+            
+            if ffmpeg_path_str:
+                self._ffmpeg_path = Path(ffmpeg_path_str)
+            if ffprobe_path_str:
+                self._ffprobe_path = Path(ffprobe_path_str)
+            self._version = self._get_version()
+            
+            logger.info(f"FFmpeg downloaded successfully: {self._ffmpeg_path}")
+            
             if download_callback:
-                download_callback((i + 1) / 10)
-        
-        # In real implementation:
-        # - Download FFmpeg for Windows/Mac
-        # - Extract to app_data/ffmpeg/
-        # - Set executable permissions
-        
-        return True, None
+                download_callback(1.0)
+            
+            return True, None
+            
+        except Exception as e:
+            error_msg = f"Failed to download FFmpeg: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
     
-    def get_version(self) -> Optional[str]:
+    def _get_version(self) -> Optional[str]:
         """Get FFmpeg version string"""
         try:
+            ffmpeg_cmd = str(self._ffmpeg_path) if self._ffmpeg_path else "ffmpeg"
             result = subprocess.run(
-                ["ffmpeg", "-version"],
+                [ffmpeg_cmd, "-version"],
                 capture_output=True,
                 text=True,
                 timeout=5
             )
             if result.returncode == 0:
-                # Extract version from first line
                 first_line = result.stdout.split('\n')[0]
                 return first_line.replace("ffmpeg version ", "")
         except Exception:
             pass
         
         return None
+    
+    def get_version(self) -> Optional[str]:
+        """Get cached FFmpeg version string"""
+        return self._version
     
     @property
     def ffmpeg_path(self) -> Optional[Path]:
@@ -112,3 +150,9 @@ class FFmpegChecker:
     def ffprobe_path(self) -> Optional[Path]:
         """Get path to FFprobe executable"""
         return self._ffprobe_path
+    
+    def get_ffmpeg_dir(self) -> Optional[Path]:
+        """Get FFmpeg binary directory for pydub"""
+        if self._ffmpeg_path:
+            return self._ffmpeg_path.parent
+        return None

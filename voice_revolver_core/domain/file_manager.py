@@ -36,6 +36,11 @@ class FileManager:
         return self._temp_path
     
     @property
+    def temp_dir(self) -> Path:
+        """Get temp directory path (alias for temp_path)"""
+        return self._temp_path
+    
+    @property
     def exports_path(self) -> Path:
         """Get exports directory path"""
         return self._exports_path

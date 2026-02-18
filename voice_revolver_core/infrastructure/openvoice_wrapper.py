@@ -1,0 +1,257 @@
+"""
+OpenVoice Wrapper - Infrastructure Layer
+Wraps OpenVoice V2 for voice conversion
+"""
+
+import torch
+import numpy as np
+import librosa
+from pathlib import Path
+from typing import Optional, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class OpenVoiceWrapper:
+    """
+    Infrastructure wrapper for OpenVoice V2 voice conversion.
+    Converts source voice to sound like reference voice.
+    """
+    
+    def __init__(self, checkpoints_path: Path, device: Optional[str] = None):
+        self._checkpoints_path = checkpoints_path
+        self._device = device or self._get_default_device()
+        self._converter = None
+        self._base_speaker_se = None  # Source speaker embedding
+        self._sample_rate = 22050
+    
+    def _get_default_device(self) -> str:
+        """Get default compute device"""
+        if torch.cuda.is_available():
+            return "cuda"
+        return "cpu"
+    
+    @property
+    def device(self) -> str:
+        return self._device
+    
+    @property
+    def is_loaded(self) -> bool:
+        return self._converter is not None
+    
+    def load_model(self) -> Tuple[bool, Optional[str]]:
+        """
+        Load OpenVoice V2 converter model.
+        Returns: (success, error_message)
+        """
+        try:
+            logger.info("OpenVoice load_model: Importing ToneColorConverter...")
+            from openvoice.api import ToneColorConverter
+            logger.info("OpenVoice load_model: Import successful")
+            
+            config_path = self._checkpoints_path / "converter" / "config.json"
+            checkpoint_path = self._checkpoints_path / "converter" / "checkpoint.pth"
+            
+            logger.info(f"OpenVoice load_model: Checking paths...")
+            logger.info(f"  config_path: {config_path}")
+            logger.info(f"  checkpoint_path: {checkpoint_path}")
+            
+            if not config_path.exists():
+                return False, f"Config not found: {config_path}"
+            if not checkpoint_path.exists():
+                return False, f"Checkpoint not found: {checkpoint_path}"
+            
+            logger.info(f"OpenVoice load_model: Creating ToneColorConverter on device={self._device}...")
+            self._converter = ToneColorConverter(
+                str(config_path),
+                device=self._device
+            )
+            logger.info("OpenVoice load_model: ToneColorConverter created, loading checkpoint...")
+            self._converter.load_ckpt(str(checkpoint_path))
+            
+            logger.info(f"OpenVoice V2 loaded on {self._device}")
+            return True, None
+            
+        except Exception as e:
+            error_msg = f"Failed to load OpenVoice model: {str(e)}"
+            logger.error(error_msg)
+            import traceback
+            traceback.print_exc()
+            return False, error_msg
+    
+    def extract_speaker_embedding(
+        self, 
+        audio_path: Path
+    ) -> Tuple[Optional[torch.Tensor], Optional[str]]:
+        """
+        Extract speaker embedding from reference audio.
+        
+        Args:
+            audio_path: Path to reference audio file
+            
+        Returns:
+            (speaker_embedding, error_message)
+        """
+        if not self._converter:
+            success, error = self.load_model()
+            if not success:
+                return None, error
+        
+        try:
+            from openvoice import se_extractor
+            
+            logger.info(f"Extracting speaker embedding from: {audio_path}")
+            
+            # Extract speaker embedding
+            se, _ = se_extractor.get_se(
+                str(audio_path),
+                self._converter,
+                vad=True
+            )
+            
+            logger.info("Speaker embedding extracted successfully")
+            return se, None
+            
+        except Exception as e:
+            error_msg = f"Failed to extract speaker embedding: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
+    
+    def convert_voice(
+        self,
+        source_audio_path: Path,
+        target_se: torch.Tensor,
+        output_path: Path,
+        tau: float = 0.3,
+        progress_callback: Optional[callable] = None
+    ) -> Tuple[Optional[Path], Optional[str]]:
+        """
+        Convert source voice to target voice.
+        
+        Args:
+            source_audio_path: Path to source vocal audio
+            target_se: Target speaker embedding (from reference)
+            output_path: Path to save converted audio
+            tau: Voice conversion strength (0-1)
+            progress_callback: Optional progress callback
+            
+        Returns:
+            (output_path, error_message)
+        """
+        if not self._converter:
+            success, error = self.load_model()
+            if not success:
+                return None, error
+        
+        try:
+            import soundfile as sf
+            
+            if progress_callback:
+                progress_callback(0.2)
+            
+            # Load source audio
+            logger.info(f"Loading source audio: {source_audio_path}")
+            audio, sr = librosa.load(str(source_audio_path), sr=self._sample_rate)
+            
+            if progress_callback:
+                progress_callback(0.4)
+            
+            # Convert using ToneColorConverter
+            logger.info("Converting voice...")
+            
+            # Generate a neutral source (using base speaker)
+            # We need a source speaker embedding - use English base speaker
+            base_se_path = self._checkpoints_path / "base_speakers" / "ses" / "en-default.pth"
+            
+            if base_se_path.exists():
+                src_se = torch.load(base_se_path).to(self._device)
+            else:
+                # If no base speaker, create from source audio
+                src_se = target_se  # Fallback
+            
+            # Convert
+            with torch.no_grad():
+                audio_tensor = torch.tensor(audio).float().unsqueeze(0).to(self._device)
+                
+                # The converter expects specific input format
+                converted = self._converter.convert(
+                    audio_src_path=str(source_audio_path),
+                    src_se=src_se,
+                    tgt_se=target_se,
+                    tau=tau,
+                    message="@MyShell"
+                )
+            
+            if progress_callback:
+                progress_callback(0.8)
+            
+            # Save output
+            if isinstance(converted, np.ndarray):
+                output_audio = converted
+            else:
+                output_audio = converted.cpu().float().numpy()
+            
+            # Ensure correct shape
+            if output_audio.ndim > 1:
+                output_audio = output_audio.squeeze()
+            
+            sf.write(str(output_path), output_audio, self._sample_rate)
+            
+            if progress_callback:
+                progress_callback(1.0)
+            
+            logger.info(f"Voice conversion complete: {output_path}")
+            return output_path, None
+            
+        except Exception as e:
+            error_msg = f"Voice conversion failed: {str(e)}"
+            logger.error(error_msg)
+            return None, error_msg
+    
+    def convert_voice_simple(
+        self,
+        source_audio_path: Path,
+        reference_audio_path: Path,
+        output_path: Path,
+        tau: float = 0.3,
+        progress_callback: Optional[callable] = None
+    ) -> Tuple[Optional[Path], Optional[str]]:
+        """
+        Simple voice conversion: source + reference -> converted output.
+        Convenience method that handles embedding extraction automatically.
+        
+        Args:
+            source_audio_path: Path to source vocal audio
+            reference_audio_path: Path to reference voice audio
+            output_path: Path to save converted audio
+            tau: Voice conversion strength
+            progress_callback: Optional progress callback
+            
+        Returns:
+            (output_path, error_message)
+        """
+        # Extract target speaker embedding from reference
+        target_se, error = self.extract_speaker_embedding(reference_audio_path)
+        if error:
+            return None, error
+        
+        # Convert voice
+        return self.convert_voice(
+            source_audio_path,
+            target_se,
+            output_path,
+            tau,
+            progress_callback
+        )
+    
+    def unload_model(self):
+        """Unload model to free memory"""
+        if self._converter is not None:
+            del self._converter
+            self._converter = None
+            
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            logger.info("OpenVoice model unloaded")
