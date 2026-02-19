@@ -53,6 +53,7 @@ class VoiceReplacementService:
         voice_params: VoiceConversionParams,
         output_format: str = "mp3",
         output_dir: Optional[Path] = None,
+        vocal_only: bool = False,
         progress_callback: Optional[Callable[[ProgressInfo], None]] = None,
     ) -> tuple[Optional[Path], Optional[ErrorCode], str]:
         """
@@ -64,6 +65,7 @@ class VoiceReplacementService:
             voice_params: Voice conversion parameters
             output_format: Output format (mp3, wav, flac)
             output_dir: Output directory (defaults to temp)
+            vocal_only: If True, output only converted vocals without mixing
             progress_callback: Progress callback
             
         Returns:
@@ -136,22 +138,34 @@ class VoiceReplacementService:
             if err:
                 return None, err, "Voice conversion failed"
             
-            # Stage 4: Audio mixing (70-95%)
-            self._update_progress(
-                ProcessingStage.MIXING,
-                75,
-                "Mixing audio..."
-            )
-            final_output, err = self._mix_audio(converted_vocals, stems, output_dir)
-            if err:
-                return None, err, "Audio mixing failed"
+            # Stage 4: Audio mixing (70-95%) or skip if vocal_only
+            if vocal_only:
+                # Skip mixing, return vocals only
+                logger.info("Vocal-only mode: skipping mixing step")
+                final_output = converted_vocals
+                self._update_progress(
+                    ProcessingStage.COMPLETE,
+                    100,
+                    "Processing complete! (Vocal only)"
+                )
+            else:
+                # Mix converted vocals with instrumental
+                self._update_progress(
+                    ProcessingStage.MIXING,
+                    75,
+                    "Mixing audio..."
+                )
+                final_output, err = self._mix_audio(converted_vocals, stems, output_dir)
+                if err:
+                    return None, err, "Audio mixing failed"
+                
+                # Complete
+                self._update_progress(
+                    ProcessingStage.COMPLETE,
+                    100,
+                    "Processing complete!"
+                )
             
-            # Complete
-            self._update_progress(
-                ProcessingStage.COMPLETE,
-                100,
-                "Processing complete!"
-            )
             self._progress_tracker.complete_task(self._active_task_key, True)
             
             return final_output, None, "Success"

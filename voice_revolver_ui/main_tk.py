@@ -270,7 +270,7 @@ class VoiceRevolverApp:
     def __init__(self, root, device, app_data_path):
         self.root = root
         self.root.title("Voice Revolver AI - Local Voice Replacement")
-        self.root.geometry("900x650")  # Larger window for 4 preview players
+        self.root.geometry("900x720")  # Larger window for 5 preview players + settings
         
         # Configuration
         self.device = device
@@ -411,6 +411,15 @@ class VoiceRevolverApp:
         style_combo.grid(row=2, column=1, sticky=tk.W, padx=5)
         ttk.Label(settings_frame, text="Accent variant to apply", foreground="gray").grid(
             row=2, column=2, columnspan=2, sticky=tk.W, padx=5)
+        
+        # Use vocal only checkbox
+        self.vocal_only_var = tk.BooleanVar(value=False)
+        vocal_only_check = ttk.Checkbutton(settings_frame, text="Use Vocal Only", 
+                                           variable=self.vocal_only_var)
+        vocal_only_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
+        ttk.Label(settings_frame, text="Use the separated vocal instead of the whole song", 
+                 foreground="gray", font=("Segoe UI", 8)).grid(
+            row=3, column=2, columnspan=2, sticky=tk.W, padx=5)
         
         # Progress Section
         progress_frame = ttk.LabelFrame(main_frame, text="Progress", padding="10")
@@ -684,6 +693,7 @@ class VoiceRevolverApp:
                 reference_voice_path=Path(self.reference_file),
                 voice_params=voice_params,
                 output_format=output_format,
+                vocal_only=self.vocal_only_var.get(),
                 progress_callback=progress_callback
             )
             
