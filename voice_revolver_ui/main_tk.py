@@ -402,6 +402,16 @@ class VoiceRevolverApp:
         self.pitch_label.grid(row=1, column=2, columnspan=2, sticky=tk.W, padx=5)
         pitch_scale.config(command=lambda v: self.pitch_label.config(text=f"{int(float(v))} semitones"))
         
+        # Voice style
+        ttk.Label(settings_frame, text="Voice Style:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.style_var = tk.StringVar(value="default")
+        style_combo = ttk.Combobox(settings_frame, textvariable=self.style_var,
+                                    values=["default", "american", "british", "australian", "indian"],
+                                    state="readonly", width=15)
+        style_combo.grid(row=2, column=1, sticky=tk.W, padx=5)
+        ttk.Label(settings_frame, text="Accent variant to apply", foreground="gray").grid(
+            row=2, column=2, columnspan=2, sticky=tk.W, padx=5)
+        
         # Progress Section
         progress_frame = ttk.LabelFrame(main_frame, text="Progress", padding="10")
         progress_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -420,11 +430,11 @@ class VoiceRevolverApp:
         
         self.preview_controls = {}
         preview_configs = [
-            ('original', 'Original Audio (Full Song)', 0),
-            ('original_vocals', 'Original Vocals Only (Before Conversion)', 1),
-            ('vocals', 'Converted Vocals Only (With Reference Voice)', 2),
-            ('final', 'Final Mix (Full Song with Reference Voice)', 3),
-            ('instrumental', 'Instrumental Only (No Vocals)', 4)
+            ('original', 'Original Audio', 0),
+            ('original_vocals', 'Original Vocal Only', 1),
+            ('vocals', 'Vocal That Reference Only', 2),
+            ('final', 'Final Remix', 3),
+            ('instrumental', 'Instrumental', 4)
         ]
         
         for track_id, track_name, row in preview_configs:
@@ -658,7 +668,7 @@ class VoiceRevolverApp:
             # Create voice params
             voice_params = VoiceConversionParams(
                 pitch=pitch,
-                emotion="neutral",
+                style=self.style_var.get(),
                 style_strength=1.0
             )
             

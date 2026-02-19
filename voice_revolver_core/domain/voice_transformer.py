@@ -50,7 +50,7 @@ class VoiceTransformer:
     
     def is_transformation_needed(self, params: VoiceConversionParams) -> bool:
         """Check if any transformation is actually needed"""
-        return params.pitch != 0 or params.emotion != "neutral" or params.style_strength != 1.0
+        return params.pitch != 0 or params.style != "default" or params.style_strength != 1.0
     
     def set_enabled(self, enabled: bool):
         """Enable or disable transformation"""

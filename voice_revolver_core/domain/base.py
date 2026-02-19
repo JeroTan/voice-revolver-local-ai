@@ -65,7 +65,7 @@ class AudioStems:
 class VoiceConversionParams:
     """Parameters for voice conversion/transformation"""
     pitch: int = 0  # -12 to +12 semitones
-    emotion: str = "neutral"  # neutral, sad, happy, angry, etc.
+    style: str = "default"  # Voice style: default, american, british, australian, indian
     style_strength: float = 1.0
 
 

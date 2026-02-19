@@ -17,7 +17,17 @@ class OpenVoiceWrapper:
     """
     Infrastructure wrapper for OpenVoice V2 voice conversion.
     Converts source voice to sound like reference voice.
+    Supports accent-based style variations.
     """
+    
+    # OpenVoice V2 supported styles (accent variants)
+    SUPPORTED_STYLES = {
+        'default': 'en-default.pth',
+        'american': 'en-us.pth',
+        'british': 'en-br.pth',
+        'australian': 'en-au.pth',
+        'indian': 'en-india.pth',
+    }
     
     def __init__(self, checkpoints_path: Path, device: Optional[str] = None):
         self._checkpoints_path = checkpoints_path
@@ -25,6 +35,7 @@ class OpenVoiceWrapper:
         self._converter = None
         self._base_speaker_se = None  # Source speaker embedding
         self._sample_rate = 22050
+        self._loaded_style_embeddings = {}  # Cache loaded embeddings
     
     def _get_default_device(self) -> str:
         """Get default compute device"""
@@ -118,22 +129,62 @@ class OpenVoiceWrapper:
             logger.error(error_msg)
             return None, error_msg
     
+    def _load_style_embedding(self, style: str) -> Tuple[Optional[torch.Tensor], Optional[str]]:
+        """
+        Load source speaker embedding for the specified style.
+        
+        Args:
+            style: Style name from SUPPORTED_STYLES
+            
+        Returns:
+            (embedding, error_message)
+        """
+        # Check if style is supported
+        if style not in self.SUPPORTED_STYLES:
+            return None, f"Unsupported style '{style}'. Choose from: {', '.join(self.SUPPORTED_STYLES.keys())}"
+        
+        # Check cache
+        if style in self._loaded_style_embeddings:
+            logger.info(f"Using cached embedding for style: {style}")
+            return self._loaded_style_embeddings[style], None
+        
+        # Load embedding file
+        embedding_file = self.SUPPORTED_STYLES[style]
+        embedding_path = self._checkpoints_path / "base_speakers" / "ses" / embedding_file
+        
+        if not embedding_path.exists():
+            return None, f"Style embedding not found: {embedding_path}"
+        
+        try:
+            logger.info(f"Loading style embedding: {style} from {embedding_file}")
+            embedding = torch.load(embedding_path).to(self._device)
+            
+            # Cache for future use
+            self._loaded_style_embeddings[style] = embedding
+            
+            return embedding, None
+            
+        except Exception as e:
+            return None, f"Failed to load style embedding: {str(e)}"
+    
     def convert_voice(
         self,
         source_audio_path: Path,
         target_se: torch.Tensor,
         output_path: Path,
         tau: float = 0.3,
+        style: str = 'default',
         progress_callback: Optional[callable] = None
     ) -> Tuple[Optional[Path], Optional[str]]:
         """
-        Convert source voice to target voice.
+        Convert source voice to target voice with style control.
         
         Args:
             source_audio_path: Path to source vocal audio
             target_se: Target speaker embedding (from reference)
             output_path: Path to save converted audio
             tau: Voice conversion strength (0-1)
+            style: Voice style/accent ('default', 'american', 'british', 'australian', 'indian')
             progress_callback: Optional progress callback
             
         Returns:
@@ -158,17 +209,18 @@ class OpenVoiceWrapper:
                 progress_callback(0.4)
             
             # Convert using ToneColorConverter
-            logger.info("Converting voice...")
+            logger.info(f"Converting voice with style: {style}")
             
-            # Generate a neutral source (using base speaker)
-            # We need a source speaker embedding - use English base speaker
-            base_se_path = self._checkpoints_path / "base_speakers" / "ses" / "en-default.pth"
-            
-            if base_se_path.exists():
-                src_se = torch.load(base_se_path).to(self._device)
-            else:
-                # If no base speaker, create from source audio
-                src_se = target_se  # Fallback
+            # Load style-specific source embedding
+            src_se, error = self._load_style_embedding(style)
+            if error:
+                # Fallback to default if style loading fails
+                logger.warning(f"Style loading failed: {error}. Using default.")
+                src_se, error = self._load_style_embedding('default')
+                if error:
+                    # Last resort: use target embedding
+                    logger.warning("Default embedding also failed. Using target embedding as source.")
+                    src_se = target_se
             
             # Convert
             with torch.no_grad():
@@ -215,6 +267,7 @@ class OpenVoiceWrapper:
         reference_audio_path: Path,
         output_path: Path,
         tau: float = 0.3,
+        style: str = 'default',
         progress_callback: Optional[callable] = None
     ) -> Tuple[Optional[Path], Optional[str]]:
         """
@@ -226,6 +279,7 @@ class OpenVoiceWrapper:
             reference_audio_path: Path to reference voice audio
             output_path: Path to save converted audio
             tau: Voice conversion strength
+            style: Voice style/accent to apply
             progress_callback: Optional progress callback
             
         Returns:
@@ -236,12 +290,13 @@ class OpenVoiceWrapper:
         if error:
             return None, error
         
-        # Convert voice
+        # Convert voice with style
         return self.convert_voice(
             source_audio_path,
             target_se,
             output_path,
             tau,
+            style,
             progress_callback
         )
     

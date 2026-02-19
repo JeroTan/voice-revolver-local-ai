@@ -26,8 +26,8 @@ class VoiceConverter:
     
     SUPPORTED_INPUT_FORMATS = ['.mp3', '.wav', '.flac', '.ogg', '.m4a']
     
-    # OpenVoice supported emotions/styles
-    SUPPORTED_EMOTIONS = ['neutral', 'sad', 'happy', 'angry', 'surprised', 'fearful']
+    # OpenVoice V2 supported styles (accent variants)
+    SUPPORTED_STYLES = ['default', 'american', 'british', 'australian', 'indian']
     
     # Supported languages for OpenVoice V2
     SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'zh', 'ja', 'kr']
@@ -55,8 +55,8 @@ class VoiceConverter:
         if params.pitch < -12 or params.pitch > 12:
             return False, "Pitch must be between -12 and +12 semitones"
         
-        if params.emotion not in self.SUPPORTED_EMOTIONS:
-            return False, f"Emotion must be one of: {', '.join(self.SUPPORTED_EMOTIONS)}"
+        if params.style not in self.SUPPORTED_STYLES:
+            return False, f"Style must be one of: {', '.join(self.SUPPORTED_STYLES)}"
         
         if params.style_strength < 0 or params.style_strength > 2.0:
             return False, "Style strength must be between 0 and 2.0"

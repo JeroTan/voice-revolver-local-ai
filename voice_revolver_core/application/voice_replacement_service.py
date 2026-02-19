@@ -261,12 +261,13 @@ class VoiceReplacementService:
             # Generate output filename
             output_path = output_dir / "converted_vocals.wav"
             
-            # Use OpenVoice wrapper
+            # Use OpenVoice wrapper with style parameter
             result_path, error = self._voice_converter.convert_voice_simple(
                 source_audio_path=vocal_path,
                 reference_audio_path=reference_path,
                 output_path=output_path,
                 tau=0.3,  # Voice conversion strength
+                style=params.style,  # Apply voice style
                 progress_callback=None
             )
             
