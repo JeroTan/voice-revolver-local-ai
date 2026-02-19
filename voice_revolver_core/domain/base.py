@@ -67,6 +67,7 @@ class VoiceConversionParams:
     pitch: int = 0  # -12 to +12 semitones
     style: str = "default"  # Voice style: default, american, british, australian, indian
     style_strength: float = 1.0
+    tau: float = 0.3  # Voice conversion strength (0.0-1.0): lower=original, higher=reference
 
 
 @dataclass

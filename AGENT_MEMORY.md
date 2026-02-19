@@ -4,9 +4,9 @@
 
 ## Summary
 
-Voice Revolver AI - A local-first desktop application for vocal replacement in songs. Uses AI (Demucs + OpenVoice) to separate vocals from a song and replace them with a reference voice. Built with DDD architecture for modularity.
+Voice Revolver AI - A local-first desktop application for vocal replacement in songs. Uses AI (Demucs + ChatterBox VC) to separate vocals from a song and replace them with a reference voice. Built with DDD architecture for modularity.
 
-**Current State:** Core structure implemented, UI ready, needs ML model integration
+**Current State:** ChatterBox VC integration complete, replacing OpenVoice for better quality
 **Goal:** Portable desktop app (Windows .exe, Mac .app)
 
 ---
@@ -19,7 +19,7 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ### DDD Core Components
 1. **StemSeparator** - Demucs for stem separation (vocals, drums, bass, other)
-2. **VoiceConverter** - OpenVoice V2 for voice conversion
+2. **VoiceConverter** - ChatterBox VC for voice conversion (OpenVoice V2 kept as fallback)
 3. **AudioMixer** - Combine vocals + instrumental
 4. **FormatConverter** - pydub for format conversion (WAV ↔ MP3/FLAC)
 5. **VoiceTransformer** - Pitch + Emotion control
@@ -30,10 +30,11 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 10. **ProjectService** - Save/load .vra project files
 
 ### Tech Stack
-- **Language:** Python 3.10+
-- **UI Framework:** PyQt/PySide
-- **ML Models:** Demucs, OpenVoice V2
-- **Audio:** pydub, FFmpeg (bundled + auto-download)
+- **Language:** Python 3.11.x (REQUIRED)
+- **UI Framework:** tkinter (native Python)
+- **ML Models:** Demucs, ChatterBox VC (OpenVoice V2 legacy)
+- **Audio:** pydub, FFmpeg (bundled + auto-download), pygame (preview)
+- **Audio Enhancement:** noisereduce, pedalboard, pyloudnorm
 - **Packaging:** PyInstaller/Nuitka (portable EXE)
 
 ### Key Features
@@ -207,6 +208,86 @@ Files Modified:
 - ✅ Core processing tested successfully via test_core.py
 - ⏳ UI processing flow needs testing (should work now with synchronous code)
 - 📋 Next: Test full UI workflow to confirm fix
+
+### 2026-02-19 | ChatterBox Integration - Improved Voice Quality
+- **Topic:** Replaced OpenVoice V2 with ChatterBox VC for better conversion quality
+- **Issue:** OpenVoice V2 converted vocals sounded "sabog" (distorted/messy)
+  - Watermark embedding degraded audio quality
+  - Aggressive vocal enhancement before conversion too strong
+  - Overall poor conversion quality
+
+#### Investigation & Failed Fixes:
+1. Tried disabling OpenVoice watermark - API error (not supported in installed version)
+2. Reduced vocal enhancement (noise_reduction 0.8 → 0.3) - no improvement
+3. Disabled vocal enhancement entirely - still distorted
+
+#### Solution - ChatterBox VC Integration:
+**Decision:** Switch to ChatterBox VC (Resemble AI) - state-of-the-art voice conversion
+
+Files Created:
+- `voice_revolver_core/infrastructure/chatterbox_wrapper.py` - ChatterBox VC wrapper
+  - Simple API: `convert_voice(source, target, output)` - no complex params
+  - Sample rate: 24kHz (ChatterBox default)
+  - Device auto-detection (CUDA/MPS/CPU)
+
+Files Modified:
+- `requirements.txt` - Added `chatterbox-tts` as primary VC engine
+- `voice_revolver_core/application/voice_replacement_service.py`:
+  - Updated `_convert_voice()` to use ChatterBox's simple API
+  - Added commented code for switching back to OpenVoice
+- `voice_revolver_ui/main_tk.py`:
+  - Switched from `OpenVoiceWrapper` to `ChatterBoxWrapper`
+  - **Commented out OpenVoice UI controls:**
+    - Voice Style dropdown (accent variants)
+    - Conversion Strength (tau) slider, input, reset button
+  - Added fallback initialization for compatibility
+  - Added clear comments marking controls as "OpenVoice-only"
+
+#### ChatterBox vs OpenVoice:
+| Feature | OpenVoice V2 | ChatterBox VC |
+|---------|--------------|---------------|
+| **Quality** | Poor (distorted) | Better (22K+ stars) |
+| **API** | Complex (tau, style, embeddings) | Simple (2 params) |
+| **Watermark** | Yes (degrades quality) | Yes (Perth - imperceptible) |
+| **Parameters** | tau, style, style_strength | None (auto-optimized) |
+| **Stars** | ~10K | 22.7K |
+| **License** | MIT | MIT |
+
+#### Architecture Changes:
+- **OpenVoice kept intact** - Easy to switch back if needed
+- **UI controls commented** - Not deleted, just disabled
+- **Service layer flexible** - Accepts either wrapper implementation
+
+#### Installation:
+- Installed `chatterbox-tts` in Python 3.11 venv
+- Dependencies: torch 2.6.0, transformers, gradio, librosa, etc.
+- ⚠️ Downgraded numpy to 1.25.2 (ChatterBox requirement)
+
+#### UI Changes:
+- Window size: 900x850 (fits all controls + previews)
+- Log window: Positioned to the right of main window (not below)
+- Volume slider: Added for preview playback control
+- Preview tracks: 5 separate players (Original, Original Vocals, Converted Vocals, Final Remix, Instrumental)
+
+#### File Caching Fix:
+- **Issue:** Preview showing old cached files from previous runs
+- **Fix:** Added cleanup at start of processing:
+  - Deletes all preview files: mixed_output.wav, converted_vocals.wav, original_vocals.wav, etc.
+  - Copies stems to standardized names for UI preview
+  - Ensures fresh files for each processing run
+
+#### Current Status:
+- ✅ ChatterBox wrapper implemented
+- ✅ Service layer updated to use ChatterBox
+- ✅ UI controls for OpenVoice commented out
+- ✅ chatterbox-tts installed successfully
+- ⏳ **Next:** Test conversion quality with ChatterBox
+- ⏳ Compare results: OpenVoice vs ChatterBox
+
+#### Technical Notes:
+- **ChatterBox has TTS capabilities** (text-to-speech) but we only use VC (voice conversion)
+- **ChatterBoxTTS has more controls** (cfg_weight ≈ tau, exaggeration) but requires text input
+- **ChatterBoxVC is simpler** - Perfect for our use case (audio → audio conversion)
 
 ---
 

@@ -17,6 +17,7 @@ from ..domain import (
     VoiceConversionParams,
     generate_task_key,
 )
+from ..infrastructure.vocal_enhancer import VocalEnhancer
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class VoiceReplacementService:
     def __init__(
         self,
         stem_separator,      # Infrastructure: Demucs wrapper
-        voice_converter,     # Infrastructure: OpenVoice wrapper
+        voice_converter,     # Infrastructure: ChatterBox wrapper (or OpenVoice if using legacy)
         voice_transformer,   # Infrastructure: Pitch/Emotion wrapper
         audio_mixer,        # Infrastructure: Audio mixing wrapper
         file_manager,        # Domain: File management
@@ -42,6 +43,7 @@ class VoiceReplacementService:
         self._audio_mixer = audio_mixer
         self._file_manager = file_manager
         self._progress_tracker = progress_tracker
+        self._vocal_enhancer = VocalEnhancer(sample_rate=22050)
         
         self._active_task_key: Optional[str] = None
         self._progress_callback: Optional[Callable] = None
@@ -78,17 +80,29 @@ class VoiceReplacementService:
         
         logger.info(f"Output directory: {output_dir}")
         
-        # Ensure temp directory exists and clean up locked files from previous runs
+        # Ensure temp directory exists and clean up ALL preview files from previous runs
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Clean up output file if it exists (prevent permission errors)
-        mixed_output = output_dir / "mixed_output.wav"
-        if mixed_output.exists():
-            try:
-                mixed_output.unlink()
-                logger.info(f"Cleaned up previous output file: {mixed_output}")
-            except Exception as e:
-                logger.warning(f"Could not clean up previous output: {e}")
+        # Clean up all preview files to prevent loading stale cached files
+        preview_files = [
+            "mixed_output.wav",
+            "converted_vocals.wav",
+            "original_vocals.wav",
+            "original_drums.wav",
+            "original_bass.wav",
+            "original_other.wav",
+            "instrumental_only.wav",
+            "vocals_enhanced.wav"
+        ]
+        
+        for filename in preview_files:
+            file_path = output_dir / filename
+            if file_path.exists():
+                try:
+                    file_path.unlink()
+                    logger.info(f"Cleaned up previous file: {filename}")
+                except Exception as e:
+                    logger.warning(f"Could not clean up {filename}: {e}")
         
         # Store progress callback
         self._progress_callback = progress_callback
@@ -121,7 +135,40 @@ class VoiceReplacementService:
                 logger.error(f"Stem separation failed with error: {err}")
                 return None, err, "Stem separation failed"
             
-            logger.info("Stem separation complete, moving to voice conversion...")
+            # Copy stems to standardized names for UI preview
+            import shutil
+            stem_mappings = {
+                'vocals': 'original_vocals.wav',
+                'drums': 'original_drums.wav',
+                'bass': 'original_bass.wav',
+                'other': 'original_other.wav'
+            }
+            
+            for stem_name, standard_name in stem_mappings.items():
+                stem_path = getattr(stems, stem_name, None)
+                if stem_path and stem_path.exists():
+                    dest_path = output_dir / standard_name
+                    shutil.copy(stem_path, dest_path)
+                    logger.info(f"Copied {stem_name} to {standard_name} for preview")
+            
+            logger.info("Stem separation complete, enhancing vocals...")
+            
+            # Stage 2.5: Enhance separated vocals
+            self._update_progress(
+                ProcessingStage.VOICE_CONVERSION,
+                32,
+                "Enhancing separated vocals..."
+            )
+            enhanced_vocals_path = output_dir / "vocals_enhanced.wav"
+            enhanced_vocals_result, enhance_err = self._vocal_enhancer.enhance_vocal(
+                stems.vocals,
+                enhanced_vocals_path,
+                noise_reduction=0.3
+            )
+            
+            # Use enhanced vocals for conversion (fallback to original if enhancement fails)
+            vocals_to_convert = enhanced_vocals_result if enhanced_vocals_result else stems.vocals
+            logger.info(f"Using vocals for conversion: {vocals_to_convert}")
             
             # Stage 3: Voice conversion (30-70%)
             self._update_progress(
@@ -130,7 +177,7 @@ class VoiceReplacementService:
                 "Converting voice..."
             )
             converted_vocals, err = self._convert_voice(
-                stems.vocals, 
+                vocals_to_convert, 
                 reference_voice_path,
                 output_dir,
                 voice_params
@@ -138,33 +185,30 @@ class VoiceReplacementService:
             if err:
                 return None, err, "Voice conversion failed"
             
-            # Stage 4: Audio mixing (70-95%) or skip if vocal_only
+            # Stage 4: Audio mixing (70-95%) - ALWAYS create full mix for preview
+            self._update_progress(
+                ProcessingStage.MIXING,
+                75,
+                "Mixing audio..."
+            )
+            final_mix, err = self._mix_audio(converted_vocals, stems, output_dir)
+            if err:
+                return None, err, "Audio mixing failed"
+            
+            # Stage 5: Choose output based on vocal_only setting
             if vocal_only:
-                # Skip mixing, return vocals only
-                logger.info("Vocal-only mode: skipping mixing step")
+                logger.info("Vocal-only mode: returning vocals only as final output")
                 final_output = converted_vocals
-                self._update_progress(
-                    ProcessingStage.COMPLETE,
-                    100,
-                    "Processing complete! (Vocal only)"
-                )
             else:
-                # Mix converted vocals with instrumental
-                self._update_progress(
-                    ProcessingStage.MIXING,
-                    75,
-                    "Mixing audio..."
-                )
-                final_output, err = self._mix_audio(converted_vocals, stems, output_dir)
-                if err:
-                    return None, err, "Audio mixing failed"
-                
-                # Complete
-                self._update_progress(
-                    ProcessingStage.COMPLETE,
-                    100,
-                    "Processing complete!"
-                )
+                logger.info("Full mix mode: returning mixed audio as final output")
+                final_output = final_mix
+            
+            # Complete
+            self._update_progress(
+                ProcessingStage.COMPLETE,
+                100,
+                "Processing complete!"
+            )
             
             self._progress_tracker.complete_task(self._active_task_key, True)
             
@@ -270,20 +314,28 @@ class VoiceReplacementService:
         output_dir: Path,
         params: VoiceConversionParams
     ) -> tuple[Optional[Path], Optional[ErrorCode]]:
-        """Convert voice using OpenVoice"""
+        """Convert voice using ChatterBox VC (or OpenVoice if using legacy)"""
         try:
             # Generate output filename
             output_path = output_dir / "converted_vocals.wav"
             
-            # Use OpenVoice wrapper with style parameter
-            result_path, error = self._voice_converter.convert_voice_simple(
+            # Use ChatterBox wrapper (simple API - no style/tau parameters)
+            result_path, error = self._voice_converter.convert_voice(
                 source_audio_path=vocal_path,
-                reference_audio_path=reference_path,
+                target_voice_path=reference_path,
                 output_path=output_path,
-                tau=0.3,  # Voice conversion strength
-                style=params.style,  # Apply voice style
                 progress_callback=None
             )
+            
+            # NOTE: If using OpenVoice wrapper instead, use:
+            # result_path, error = self._voice_converter.convert_voice_simple(
+            #     source_audio_path=vocal_path,
+            #     reference_audio_path=reference_path,
+            #     output_path=output_path,
+            #     tau=params.tau,  # Voice conversion strength from UI
+            #     style=params.style,  # Apply voice style
+            #     progress_callback=None
+            # )
             
             if error:
                 logger.error(f"Voice conversion error: {error}")

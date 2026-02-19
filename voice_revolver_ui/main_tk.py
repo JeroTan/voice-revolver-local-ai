@@ -33,7 +33,8 @@ from voice_revolver_core.infrastructure.compute_controller import ComputeControl
 from voice_revolver_core.infrastructure.model_manager import ModelManager
 from voice_revolver_core.infrastructure.ffmpeg_checker import FFmpegChecker
 from voice_revolver_core.infrastructure.demucs_wrapper import DemucsWrapper
-from voice_revolver_core.infrastructure.openvoice_wrapper import OpenVoiceWrapper
+# from voice_revolver_core.infrastructure.openvoice_wrapper import OpenVoiceWrapper  # Legacy - kept for reference
+from voice_revolver_core.infrastructure.chatterbox_wrapper import ChatterBoxWrapper
 from voice_revolver_core.infrastructure.audio_mixer import AudioMixer
 from voice_revolver_core.infrastructure.format_converter import FormatConverter
 from voice_revolver_core.domain.file_manager import FileManager
@@ -270,7 +271,7 @@ class VoiceRevolverApp:
     def __init__(self, root, device, app_data_path):
         self.root = root
         self.root.title("Voice Revolver AI - Local Voice Replacement")
-        self.root.geometry("900x720")  # Larger window for 5 preview players + settings
+        self.root.geometry("900x850")  # Larger window for 5 preview players + volume control + tau control
         
         # Configuration
         self.device = device
@@ -281,6 +282,10 @@ class VoiceRevolverApp:
         self.reference_file = None
         self.output_file = None
         self.processing = False
+        
+        # OpenVoice-specific params (kept for compatibility, not used with ChatterBox)
+        self.style_var = tk.StringVar(value="default")
+        self.tau_var = tk.DoubleVar(value=0.3)
         
         # Processed file paths for 5 previews
         self.original_audio_path = None
@@ -402,24 +407,62 @@ class VoiceRevolverApp:
         self.pitch_label.grid(row=1, column=2, columnspan=2, sticky=tk.W, padx=5)
         pitch_scale.config(command=lambda v: self.pitch_label.config(text=f"{int(float(v))} semitones"))
         
-        # Voice style
-        ttk.Label(settings_frame, text="Voice Style:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.style_var = tk.StringVar(value="default")
-        style_combo = ttk.Combobox(settings_frame, textvariable=self.style_var,
-                                    values=["default", "american", "british", "australian", "indian"],
-                                    state="readonly", width=15)
-        style_combo.grid(row=2, column=1, sticky=tk.W, padx=5)
-        ttk.Label(settings_frame, text="Accent variant to apply", foreground="gray").grid(
-            row=2, column=2, columnspan=2, sticky=tk.W, padx=5)
+        # =================================================================
+        # OpenVoice-Specific Controls (Disabled for ChatterBox)
+        # These controls are only used with OpenVoice wrapper
+        # ChatterBox VC has simpler API without style/conversion strength
+        # Uncomment if switching back to OpenVoice
+        # =================================================================
+        
+        # # Voice style (OpenVoice only)
+        # ttk.Label(settings_frame, text="Voice Style:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        # self.style_var = tk.StringVar(value="default")
+        # style_combo = ttk.Combobox(settings_frame, textvariable=self.style_var,
+        #                             values=["default", "american", "british", "australian", "indian"],
+        #                             state="readonly", width=15)
+        # style_combo.grid(row=2, column=1, sticky=tk.W, padx=5)
+        # ttk.Label(settings_frame, text="Accent variant to apply", foreground="gray").grid(
+        #     row=2, column=2, columnspan=2, sticky=tk.W, padx=5)
+        
+        # # Voice conversion strength / tau (OpenVoice only)
+        # tau_frame = ttk.Frame(settings_frame)
+        # tau_frame.grid(row=3, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+        
+        # ttk.Label(tau_frame, text="Conversion Strength:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        # ttk.Label(tau_frame, text="Close to original", foreground="gray", font=("Segoe UI", 8)).grid(
+        #     row=0, column=1, sticky=tk.E, padx=5)
+        
+        # self.tau_var = tk.DoubleVar(value=0.3)
+        # tau_scale = ttk.Scale(tau_frame, from_=0.0, to=1.0, variable=self.tau_var,
+        #                      orient=tk.HORIZONTAL, length=150, command=self._on_tau_change)
+        # tau_scale.grid(row=0, column=2, sticky=tk.W, padx=5)
+        
+        # ttk.Label(tau_frame, text="Close to reference", foreground="gray", font=("Segoe UI", 8)).grid(
+        #     row=0, column=3, sticky=tk.W, padx=5)
+        
+        # # Precise tau input
+        # self.tau_entry = ttk.Entry(tau_frame, width=6)
+        # self.tau_entry.insert(0, "0.30")
+        # self.tau_entry.grid(row=0, column=4, sticky=tk.W, padx=5)
+        # self.tau_entry.bind('<Return>', self._on_tau_entry_change)
+        # self.tau_entry.bind('<FocusOut>', self._on_tau_entry_change)
+        
+        # # Reset button
+        # reset_btn = ttk.Button(tau_frame, text="↺", width=3, command=self._reset_tau)
+        # reset_btn.grid(row=0, column=5, sticky=tk.W, padx=(0, 5))
+        
+        # =================================================================
+        # End OpenVoice-Specific Controls
+        # =================================================================
         
         # Use vocal only checkbox
         self.vocal_only_var = tk.BooleanVar(value=False)
         vocal_only_check = ttk.Checkbutton(settings_frame, text="Use Vocal Only", 
                                            variable=self.vocal_only_var)
-        vocal_only_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
+        vocal_only_check.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=5)
         ttk.Label(settings_frame, text="Use the separated vocal instead of the whole song", 
                  foreground="gray", font=("Segoe UI", 8)).grid(
-            row=3, column=2, columnspan=2, sticky=tk.W, padx=5)
+            row=4, column=2, columnspan=2, sticky=tk.W, padx=5)
         
         # Progress Section
         progress_frame = ttk.LabelFrame(main_frame, text="Progress", padding="10")
@@ -437,6 +480,20 @@ class VoiceRevolverApp:
         preview_frame = ttk.LabelFrame(main_frame, text="Preview & Export", padding="10")
         preview_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         
+        # Volume control at the top
+        volume_frame = ttk.Frame(preview_frame)
+        volume_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        ttk.Label(volume_frame, text="Volume:", font=("Arial", 9)).grid(row=0, column=0, padx=(0, 5))
+        
+        self.volume_var = tk.DoubleVar(value=0.7)  # Default 70%
+        volume_slider = ttk.Scale(volume_frame, from_=0, to=1, variable=self.volume_var,
+                                 orient=tk.HORIZONTAL, length=150, command=self._on_volume_change)
+        volume_slider.grid(row=0, column=1, padx=5)
+        
+        self.volume_label = ttk.Label(volume_frame, text="70%", width=5)
+        self.volume_label.grid(row=0, column=2, padx=5)
+        
         self.preview_controls = {}
         preview_configs = [
             ('original', 'Original Audio', 0),
@@ -447,9 +504,9 @@ class VoiceRevolverApp:
         ]
         
         for track_id, track_name, row in preview_configs:
-            # Track frame
+            # Track frame (offset row by 1 because volume control is at row 0)
             track_frame = ttk.Frame(preview_frame)
-            track_frame.grid(row=row, column=0, sticky=(tk.W, tk.E), pady=5)
+            track_frame.grid(row=row+1, column=0, sticky=(tk.W, tk.E), pady=5)
             
             # Track name label
             ttk.Label(track_frame, text=track_name, font=("Arial", 9, "bold"), width=30).grid(row=0, column=0, sticky=tk.W)
@@ -518,14 +575,14 @@ class VoiceRevolverApp:
         """Create separate log window"""
         self.log_window = tk.Toplevel(self.root)
         self.log_window.title("Voice Revolver AI - Logs")
-        self.log_window.geometry("700x400")
+        self.log_window.geometry("700x850")
         
-        # Position below main window
+        # Position to the right of main window
         self.root.update_idletasks()
         main_x = self.root.winfo_x()
         main_y = self.root.winfo_y()
-        main_height = self.root.winfo_height()
-        self.log_window.geometry(f"+{main_x}+{main_y + main_height + 30}")
+        main_width = self.root.winfo_width()
+        self.log_window.geometry(f"+{main_x + main_width + 10}+{main_y}")
         
         # Log text widget  
         log_frame = ttk.Frame(self.log_window, padding="10")
@@ -658,16 +715,22 @@ class VoiceRevolverApp:
             
             # Initialize infrastructure wrappers
             demucs_wrapper = DemucsWrapper(device)
-            openvoice_wrapper = OpenVoiceWrapper(
-                self.model_manager.openvoice_path,
-                device
-            )
+            
+            # ChatterBox VC - Better quality than OpenVoice
+            chatterbox_wrapper = ChatterBoxWrapper(device)
+            
+            # OpenVoice (legacy - uncomment to use instead of ChatterBox):
+            # openvoice_wrapper = OpenVoiceWrapper(
+            #     self.model_manager.openvoice_path,
+            #     device
+            # )
+            
             audio_mixer = AudioMixer(ffmpeg_dir)
             
             # Create voice replacement service
             service = VoiceReplacementService(
                 demucs_wrapper,
-                openvoice_wrapper,
+                chatterbox_wrapper,  # Using ChatterBox instead of openvoice_wrapper
                 None,  # voice_transformer (not implemented yet)
                 audio_mixer,
                 self.file_manager,
@@ -675,10 +738,12 @@ class VoiceRevolverApp:
             )
             
             # Create voice params
+            # NOTE: style and tau are ignored by ChatterBox (only used by OpenVoice)
             voice_params = VoiceConversionParams(
                 pitch=pitch,
-                style=self.style_var.get(),
-                style_strength=1.0
+                style=self.style_var.get(),     # Ignored by ChatterBox
+                style_strength=1.0,              # Ignored by ChatterBox
+                tau=self.tau_var.get()          # Ignored by ChatterBox
             )
             
             # Progress callback - receives (percentage, stage) args
@@ -803,8 +868,13 @@ class VoiceRevolverApp:
         if vocals_path.exists():
             self.vocals_converted_path = str(vocals_path)
         
-        # 4. Final mix (output with reference voice)
-        self.final_mix_path = self.output_file
+        # 4. Final mix (ALWAYS load the full remix, regardless of vocal_only setting)
+        final_mix_path = temp_dir / "mixed_output.wav"
+        if final_mix_path.exists():
+            self.final_mix_path = str(final_mix_path)
+        else:
+            # Fallback to output file if mixed_output doesn't exist
+            self.final_mix_path = self.output_file
         
         # 5. Instrumental (need to mix stems excluding vocals)
         self._create_instrumental_track(temp_dir)
@@ -908,6 +978,7 @@ class VoiceRevolverApp:
             # Load and play
             try:
                 mixer.music.load(file_path)
+                mixer.music.set_volume(self.volume_var.get())  # Apply current volume
                 mixer.music.play()
                 state['playing'] = True
                 self.current_track = track_id
@@ -915,6 +986,51 @@ class VoiceRevolverApp:
                 self._update_playback_time(track_id)
             except Exception as e:
                 self.log(f"⚠ Playback error: {e}")
+    
+    def _on_volume_change(self, value):
+        """Handle volume slider changes"""
+        try:
+            volume = float(value)
+            # Update volume label
+            self.volume_label.config(text=f"{int(volume * 100)}%")
+            # Apply to currently playing track
+            if hasattr(self, 'current_track') and self.current_track:
+                if self.preview_states[self.current_track]['playing']:
+                    mixer.music.set_volume(volume)
+        except Exception as e:
+            self.log(f"⚠ Volume change error: {e}")
+    
+    def _on_tau_change(self, value):
+        """Handle tau slider changes - update entry field"""
+        try:
+            tau = float(value)
+            self.tau_entry.delete(0, tk.END)
+            self.tau_entry.insert(0, f"{tau:.2f}")
+        except Exception as e:
+            self.log(f"⚠ Tau slider error: {e}")
+    
+    def _on_tau_entry_change(self, event):
+        """Handle tau entry field changes - update slider"""
+        try:
+            tau = float(self.tau_entry.get())
+            # Clamp to valid range
+            tau = max(0.0, min(1.0, tau))
+            self.tau_var.set(tau)
+            # Update entry to show clamped value
+            self.tau_entry.delete(0, tk.END)
+            self.tau_entry.insert(0, f"{tau:.2f}")
+        except ValueError:
+            # Invalid input, reset to slider value
+            self.tau_entry.delete(0, tk.END)
+            self.tau_entry.insert(0, f"{self.tau_var.get():.2f}")
+        except Exception as e:
+            self.log(f"⚠ Tau entry error: {e}")
+    
+    def _reset_tau(self):
+        """Reset tau (conversion strength) to default value 0.3"""
+        self.tau_var.set(0.3)
+        self.tau_entry.delete(0, tk.END)
+        self.tau_entry.insert(0, "0.30")
     
     def _stop_playback(self, track_id):
         """Stop playback and reset for a specific track"""

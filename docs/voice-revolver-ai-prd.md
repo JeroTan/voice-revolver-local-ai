@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-Voice Revolver AI is a local-first desktop application that enables users to replace vocals in any song with a reference voice sample. The system uses AI-powered stem separation (Demucs) to isolate vocals and instrumental tracks, then applies voice conversion (OpenVoice) to transform the original vocals to match the reference voice identity. The application is designed as a portable executable for Windows and Mac, with all processing done locally on the user's machine—no cloud dependency required.
+Voice Revolver AI is a local-first desktop application that enables users to replace vocals in any song with a reference voice sample. The system uses AI-powered stem separation (Demucs) to isolate vocals and instrumental tracks, then applies voice conversion (ChatterBox VC) to transform the original vocals to match the reference voice identity. The application is designed as a portable executable for Windows and Mac, with all processing done locally on the user's machine—no cloud dependency required.
 
 The core business logic is built using Domain-Driven Design (DDD) architecture, allowing the domain layer to be reused across different interface types (CLI, API, Desktop UI) in future iterations.
 
@@ -19,7 +19,7 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 
 **Current Situation**: Users who want to create karaoke versions or replace vocals in songs must rely on cloud-based services or expensive studio software. Existing solutions often require internet connection, have file size limits, or charge per conversion.
 
-**Proposed Solution**: A portable desktop application that runs locally, using state-of-the-art AI models (Demucs for stem separation, OpenVoice for voice conversion) to provide unlimited vocal replacement without internet dependency after initial model download.
+**Proposed Solution**: A portable desktop application that runs locally, using state-of-the-art AI models (Demucs for stem separation, ChatterBox VC for voice conversion) to provide unlimited vocal replacement without internet dependency after initial model download.
 
 **Business Impact**: Democratizes AI audio manipulation for individual users and hobbyists who need a free, unlimited, privacy-friendly tool for vocal replacement and voice conversion experiments.
 
@@ -135,15 +135,16 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 - **Error Handling**: If model fails to load, show error with code STEM_LOAD_FAILED
 
 #### Feature 2: Voice Conversion (VoiceConverter)
-- **Description**: Uses OpenVoice to convert original vocals to match reference voice
+- **Description**: Uses ChatterBox VC (Resemble AI) to convert original vocals to match reference voice
 - **Input**: Original vocal track, reference voice audio
 - **Output**: Converted vocal track
-- **Models**: OpenVoice V2 (better quality, multi-language support)
+- **Models**: ChatterBox VC (22K+ stars, state-of-the-art quality)
 - **Edge Cases**:
-  - Reference audio too short (<3 seconds): Show warning, proceed with available data
-  - Reference audio noisy: Attempt to clean, warn user if quality poor
-  - Language mismatch: OpenVoice handles cross-lingual, but may warn
+  - Reference audio too short (<5 seconds): ChatterBox may still work but quality degrades
+  - Reference audio noisy: ChatterBox handles noise robustly
+  - Language mismatch: ChatterBox handles cross-lingual voice conversion
 - **Error Handling**: Error codes VOICE_CONVERT_FAILED, REFERENCE_TOO_SHORT
+- **Fallback**: OpenVoice V2 wrapper kept for legacy compatibility (can switch back if needed)
 
 #### Feature 3: Audio Mixing (AudioMixer)
 - **Description**: Combines converted vocals with original instrumental stems
@@ -165,10 +166,11 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 - **Error Handling**: Error code CONVERT_FAILED, UNSUPPORTED_FORMAT
 
 #### Feature 5: Voice Transformation (VoiceTransformer)
-- **Description**: Applies pitch adjustment and emotion control via OpenVoice
+- **Description**: Applies pitch adjustment and optional emotion control
 - **Parameters**:
   - Pitch: -12 to +12 semitones
-  - Emotion/Style: Controlled via OpenVoice style parameters
+  - Note: ChatterBox VC auto-optimizes voice characteristics (no manual style controls)
+  - Legacy: OpenVoice style parameters available if using OpenVoice wrapper
 - **Edge Cases**: Extreme pitch values may cause artifacts—show warning
 - **Error Handling**: Error code TRANSFORM_FAILED
 
@@ -280,14 +282,16 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 
 ### Phase 1: MVP (Required for Initial Launch)
 - Stem separation via Demucs
-- Voice conversion via OpenVoice
+- Voice conversion via ChatterBox VC
+- Vocal enhancement (noisereduce, pedalboard, pyloudnorm)
 - Basic audio mixing
-- Preview with play/pause/seek
+- Preview with play/pause/seek (5 separate tracks)
 - Export to WAV/MP3
 - Model auto-download on startup
 - FFmpeg auto-download
 - Progress tracking
 - Error code system
+- File caching cleanup
 - File naming (auto date_time_random)
 - Basic project save/load (.vra)
 - GPU/CPU selection with suggestion
@@ -328,10 +332,12 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 
 **Dependencies:**
 - **Demucs**: https://github.com/facebookresearch/demucs
-- **OpenVoice**: https://github.com/myshell-ai/OpenVoice
+- **ChatterBox VC**: https://github.com/resemble-ai/chatterbox (Primary)
+- **OpenVoice**: https://github.com/myshell-ai/OpenVoice (Legacy/Fallback)
 - **pydub**: Audio format conversion
-- **PyQt/PySide**: Desktop UI framework
+- **tkinter**: Desktop UI framework (native Python)
 - **FFmpeg**: Audio processing (bundled)
+- **Audio Enhancement**: noisereduce, pedalboard, pyloudnorm
 
 **Known Blockers:**
 - None identified at requirements stage
@@ -349,8 +355,10 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 
 ### References
 - Demucs Windows Installation: https://github.com/facebookresearch/demucs/blob/main/docs/windows.md
-- OpenVoice Usage: https://github.com/myshell-ai/OpenVoice/blob/main/docs/USAGE.md
-- PyQt Documentation: https://doc.qt.io/qtforpython/
+- ChatterBox GitHub: https://github.com/resemble-ai/chatterbox
+- ChatterBox VC Example: https://github.com/resemble-ai/chatterbox/blob/master/example_vc.py
+- OpenVoice Usage: https://github.com/myshell-ai/OpenVoice/blob/main/docs/USAGE.md (Legacy)
+- tkinter Documentation: https://docs.python.org/3/library/tkinter.html
 - Parselmouth Pitch Manipulation: https://parselmouth.readthedocs.io/en/stable/examples/pitch_manipulation.html
 
 ---

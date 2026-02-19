@@ -81,6 +81,11 @@ class OpenVoiceWrapper:
             logger.info("OpenVoice load_model: ToneColorConverter created, loading checkpoint...")
             self._converter.load_ckpt(str(checkpoint_path))
             
+            # Disable watermark for better audio quality
+            if hasattr(self._converter, 'watermark_model'):
+                self._converter.watermark_model = None
+                logger.info("Watermark disabled for better quality")
+            
             logger.info(f"OpenVoice V2 loaded on {self._device}")
             return True, None
             
@@ -247,6 +252,9 @@ class OpenVoiceWrapper:
             # Ensure correct shape
             if output_audio.ndim > 1:
                 output_audio = output_audio.squeeze()
+            
+            # Ensure output directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             
             sf.write(str(output_path), output_audio, self._sample_rate)
             
