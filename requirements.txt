@@ -17,6 +17,7 @@ demucs
 # Voice conversion
 git+https://github.com/myshell-ai/OpenVoice.git
 git+https://github.com/myshell-ai/MeloTTS.git
+whisper-timestamped
 
 # Audio processing
 pydub
@@ -29,11 +30,8 @@ static-ffmpeg
 # HTTP downloads
 requests
 
-# UI
-PyQt6
-
-# Utilities
-tqdm
+# Audio preview
+pygame
 
 # Development/Build
 pyinstaller

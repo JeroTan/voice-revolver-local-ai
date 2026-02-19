@@ -76,8 +76,17 @@ class VoiceReplacementService:
         
         logger.info(f"Output directory: {output_dir}")
         
-        # Ensure temp directory exists
+        # Ensure temp directory exists and clean up locked files from previous runs
         output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Clean up output file if it exists (prevent permission errors)
+        mixed_output = output_dir / "mixed_output.wav"
+        if mixed_output.exists():
+            try:
+                mixed_output.unlink()
+                logger.info(f"Cleaned up previous output file: {mixed_output}")
+            except Exception as e:
+                logger.warning(f"Could not clean up previous output: {e}")
         
         # Store progress callback
         self._progress_callback = progress_callback

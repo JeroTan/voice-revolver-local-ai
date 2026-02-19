@@ -30,7 +30,7 @@ class FFmpegChecker:
         """Check if FFmpeg is available on system PATH"""
         return shutil.which("ffmpeg") is not None
     
-    async def ensure_available(
+    def ensure_available(
         self,
         download_callback: Optional[Callable[[float], None]] = None
     ) -> tuple[bool, Optional[str]]:
@@ -60,7 +60,7 @@ class FFmpegChecker:
             return True, None
         
         # Download using static-ffmpeg
-        return await self._download_ffmpeg(download_callback)
+        return self._download_ffmpeg(download_callback)
     
     def _get_bundled_ffmpeg(self) -> Optional[Path]:
         """Check for bundled FFmpeg in app data"""
@@ -75,31 +75,20 @@ class FFmpegChecker:
         
         return None
     
-    async def _download_ffmpeg(
+    def _download_ffmpeg(
         self,
         download_callback: Optional[Callable[[float], None]] = None
     ) -> tuple[bool, Optional[str]]:
         """
         Download FFmpeg using static-ffmpeg library.
         """
-        import asyncio
-        
         try:
             from static_ffmpeg import run
             
             logger.info("Downloading FFmpeg (static-ffmpeg)...")
             
-            # Run in thread to avoid blocking
-            loop = asyncio.get_event_loop()
-            
-            def _download():
-                # This will download FFmpeg if not present and return paths
-                ffmpeg_path, ffprobe_path = run.get_or_fetch_platform_executables_else_raise()
-                return ffmpeg_path, ffprobe_path
-            
-            # Run download in executor to not block
-            result = await loop.run_in_executor(None, _download)
-            ffmpeg_path_str, ffprobe_path_str = result
+            # Download FFmpeg synchronously
+            ffmpeg_path_str, ffprobe_path_str = run.get_or_fetch_platform_executables_else_raise()
             
             if ffmpeg_path_str:
                 self._ffmpeg_path = Path(ffmpeg_path_str)

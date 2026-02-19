@@ -77,7 +77,11 @@ class AudioMixer:
             # Load vocals
             logger.info(f"Loading vocals: {vocals_path}")
             vocals = AudioSegment.from_file(str(vocals_path))
-            vocals = vocals.apply_gain_volume(self._vocals_volume)
+            # Apply gain if volume is not 1.0 (convert linear volume to dB)
+            if self._vocals_volume != 1.0 and self._vocals_volume > 0:
+                import math
+                gain_db = 20 * math.log10(self._vocals_volume)
+                vocals = vocals.apply_gain(gain_db)
             
             if progress_callback:
                 progress_callback(0.3)
@@ -90,7 +94,11 @@ class AudioMixer:
                 if stem_path and stem_path.exists():
                     logger.info(f"Loading {stem_name}: {stem_path}")
                     stem_audio = AudioSegment.from_file(str(stem_path))
-                    stem_audio = stem_audio.apply_gain_volume(self._instrumental_volume)
+                    # Apply gain if volume is not 1.0 (convert linear volume to dB)
+                    if self._instrumental_volume != 1.0 and self._instrumental_volume > 0:
+                        import math
+                        gain_db = 20 * math.log10(self._instrumental_volume)
+                        stem_audio = stem_audio.apply_gain(gain_db)
                     
                     # Match length to vocals if needed
                     if len(stem_audio) < len(vocals):
@@ -122,8 +130,18 @@ class AudioMixer:
             if progress_callback:
                 progress_callback(0.8)
             
-            # Export
+            # Export - delete existing file first to avoid permission errors
             logger.info(f"Exporting mixed audio: {output_path}")
+            if output_path.exists():
+                try:
+                    output_path.unlink()
+                    logger.info(f"Removed existing output file: {output_path}")
+                except Exception as e:
+                    logger.warning(f"Could not remove existing file: {e}")
+            
+            # Ensure parent directory exists
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
             final_mix.export(
                 str(output_path),
                 format=output_path.suffix[1:],  # Remove leading dot
