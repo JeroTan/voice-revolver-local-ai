@@ -280,11 +280,15 @@ class VoiceReplacementService:
     
     def _load_models(self):
         """Load AI models"""
-        # Load Demucs model
-        logger.info("Loading Demucs model...")
+        # Load stem separation model (Demucs or MDX)
+        logger.info("Loading stem separation model...")
         if hasattr(self._stem_separator, 'load_model'):
-            self._stem_separator.load_model()
-            logger.info("Demucs model load complete")
+            success, error = self._stem_separator.load_model()
+            if not success:
+                error_msg = f"Failed to load stem separation model: {error}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            logger.info("Stem separation model load complete")
         else:
             logger.info("Stem separator does not have load_model method")
         

@@ -3,11 +3,10 @@ OpenVoice Wrapper - Infrastructure Layer
 Wraps OpenVoice V2 for voice conversion
 """
 
-import torch
 import numpy as np
 import librosa
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -39,8 +38,12 @@ class OpenVoiceWrapper:
     
     def _get_default_device(self) -> str:
         """Get default compute device"""
-        if torch.cuda.is_available():
-            return "cuda"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return "cuda"
+        except (ImportError, OSError):
+            pass
         return "cpu"
     
     @property
@@ -99,7 +102,7 @@ class OpenVoiceWrapper:
     def extract_speaker_embedding(
         self, 
         audio_path: Path
-    ) -> Tuple[Optional[torch.Tensor], Optional[str]]:
+    ) -> Tuple[Optional[Any], Optional[str]]:
         """
         Extract speaker embedding from reference audio.
         
@@ -134,7 +137,7 @@ class OpenVoiceWrapper:
             logger.error(error_msg)
             return None, error_msg
     
-    def _load_style_embedding(self, style: str) -> Tuple[Optional[torch.Tensor], Optional[str]]:
+    def _load_style_embedding(self, style: str) -> Tuple[Optional[Any], Optional[str]]:
         """
         Load source speaker embedding for the specified style.
         
@@ -162,6 +165,7 @@ class OpenVoiceWrapper:
         
         try:
             logger.info(f"Loading style embedding: {style} from {embedding_file}")
+            import torch
             embedding = torch.load(embedding_path).to(self._device)
             
             # Cache for future use
@@ -175,7 +179,7 @@ class OpenVoiceWrapper:
     def convert_voice(
         self,
         source_audio_path: Path,
-        target_se: torch.Tensor,
+        target_se: Any,
         output_path: Path,
         tau: float = 0.3,
         style: str = 'default',
@@ -202,6 +206,7 @@ class OpenVoiceWrapper:
         
         try:
             import soundfile as sf
+            import torch
             
             if progress_callback:
                 progress_callback(0.2)
@@ -314,7 +319,11 @@ class OpenVoiceWrapper:
             del self._converter
             self._converter = None
             
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except (ImportError, OSError):
+                pass
             
             logger.info("OpenVoice model unloaded")

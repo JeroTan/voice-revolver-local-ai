@@ -9,10 +9,21 @@
 numpy<2.0
 
 # AI/ML - PyTorch 2.1.2 LTS (stable on Windows with Python 3.11)
+# For GPU (RTX/GTX series): Requires CUDA Toolkit 11.8 installed
+#   Download: https://developer.nvidia.com/cuda-11-8-0-download-archive
+#   Then: pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
+# For CPU only (no CUDA installation needed):
 --index-url https://download.pytorch.org/whl/cpu
 torch==2.1.2
 torchaudio==2.1.2
 demucs
+
+# MDX Separation - OPTIONAL (best vocal isolation)
+# Install in separate venv-mdx to avoid dependency conflicts:
+#   python -m venv venv-mdx
+#   .\venv-mdx\Scripts\Activate.ps1
+#   pip install audio-separator[cpu]>=0.18.0
+# Called via subprocess from main app (see mdx_wrapper.py)
 
 # Voice conversion
 # ChatterBox - Primary voice conversion engine for audio references (better quality than OpenVoice)

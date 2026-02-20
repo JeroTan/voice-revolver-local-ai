@@ -80,6 +80,9 @@ class VoiceConversionParams:
     threshold_low: float = 180.0  # Low threshold - aggressive shift below this F0
     threshold_mid: float = 230.0  # Mid threshold - moderate shift
     threshold_high: float = 280.0  # High threshold - conservative shift above this F0
+    
+    # Stem separation model selection
+    separation_model: str = "demucs"  # "demucs" or "mdx" - MDX has better vocal isolation
 
 
 @dataclass

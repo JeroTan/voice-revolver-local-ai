@@ -443,6 +443,108 @@ Invoke-WebRequest `
 
 ---
 
+### GPU Setup and Requirements
+
+**Status:** ⚠️ Updated (Feb 20, 2026) - GPU detection requires CUDA-enabled PyTorch  
+
+#### Issue: GPU Not Detected
+The default `requirements.txt` installs **CPU-only PyTorch** which cannot detect your GPU:
+```
+--index-url https://download.pytorch.org/whl/cpu  # ← CPU only!
+torch==2.1.2
+```
+
+#### Solution: Install CUDA-Enabled PyTorch
+For NVIDIA GPUs (RTX/GTX series), update to CUDA 11.8:
+```
+--index-url https://download.pytorch.org/whl/cu118  # ← CUDA 11.8
+torch==2.1.2
+torchaudio==2.1.2
+```
+
+#### Reinstallation Steps (for existing installations):
+```powershell
+# Activate your environment
+.\venv\Scripts\Activate.ps1
+
+# Uninstall CPU version
+pip uninstall torch torchaudio -y
+
+# Install CUDA version (CUDA 11.8 - most compatible)
+pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
+
+# IMPORTANT: Install CUDA Toolkit 11.8 (required for GPU)
+# Download: https://developer.nvidia.com/cuda-11-8-0-download-archive
+# Without CUDA Toolkit, app will crash with "caffe2_nvrtc.dll not found"
+
+# Verify GPU detection
+python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
+```
+
+#### Common Issues:
+- **"caffe2_nvrtc.dll not found"**: CUDA Toolkit 11.8 not installed
+  - Solution: Download and install CUDA Toolkit 11.8, restart PC
+  - OR: Reinstall CPU-only PyTorch if you don't want GPU acceleration
+- **GPU not detected**: CPU-only PyTorch installed instead of CUDA version
+  - Solution: Follow reinstallation steps above
+
+#### Testing:
+- RTX 4050 GPU confirmed working after CUDA PyTorch installation
+- Speed improvements: ~10-20x faster than CPU for MDX, Demucs, ChatterBox
+- MDX: 30 minutes (CPU) → ~2 minutes (GPU)
+
+#### Key Files:
+- `voice_revolver_core/infrastructure/compute_controller.py`: GPU detection logic
+- `requirements.txt`: PyTorch installation configuration
+
+---
+
+### MDX Stem Separation (OPTIONAL - Best Vocal Isolation)
+
+
+**Status:** ✅ Implemented (Feb 20, 2026) - Optional alternative to Demucs  
+**Architecture:** Dual venv (same as RVC) to avoid PyTorch conflicts
+
+#### Why Separate venv-mdx?
+- `audio-separator` requires its own PyTorch version (conflicts with main app)
+- Demucs works great for balanced quality (main default)
+- MDX23C provides **best vocal isolation** for experimental use
+- Dual venv pattern proven with RVC
+
+#### Installation:
+```powershell
+# Main environment (.venv) already has Demucs
+
+# Create MDX environment (OPTIONAL)
+python -m venv venv-mdx
+.\venv-mdx\Scripts\Activate.ps1
+pip install audio-separator[cpu]>=0.18.0
+```
+
+#### Technical Implementation:
+- **Subprocess isolation:** venv-mdx Python interpreter called from main app
+- **Model:** MDX23C-8KFFT-InstVoc_HQ.ckpt (~448MB, auto-downloads)
+- **Output:** 2-stem (vocals + instrumental) - drums/bass are silent placeholders
+- **Fallback:** If venv-mdx missing, app auto-falls back to Demucs
+- **UI:** Dropdown selector in Settings: "demucs" (default) | "mdx" (experimental)
+- **⚠️ CPU Performance:** MDX is **VERY slow on CPU** (20-30+ minutes per song, 30-min timeout)
+  - Recommended: Use Demucs on CPU (much faster, good quality)
+  - MDX best for: GPU users or when absolute best vocal isolation needed
+
+#### Key Files:
+- `voice_revolver_core/infrastructure/mdx_standalone.py`: Subprocess script in venv-mdx
+- `voice_revolver_core/infrastructure/mdx_wrapper.py`: Main app MDX integration
+- `~/.audio-separator/models/MDX23C-8KFFT-InstVoc_HQ.ckpt`: Auto-downloaded model
+
+#### Success Metrics:
+- ✅ MDX wrapper uses subprocess (no dependency conflicts)
+- ✅ Model auto-downloads on first use
+- ✅ Graceful fallback to Demucs if venv-mdx missing
+- ✅ UI dropdown for separator selection
+- ✅ Compatible with existing pipeline (4-stem output format)
+
+---
+
 ## Working Guidelines
 
 - **ALWAYS update AGENT_MEMORY.md with any important change** (file edits, deletions, architecture updates, decisions)

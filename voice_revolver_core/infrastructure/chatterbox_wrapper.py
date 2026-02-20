@@ -3,8 +3,6 @@ ChatterBox Wrapper - Infrastructure Layer
 Wraps ChatterBox VC for voice conversion
 """
 
-import torch
-import torchaudio
 from pathlib import Path
 from typing import Optional, Tuple
 import logging
@@ -25,10 +23,14 @@ class ChatterBoxWrapper:
     
     def _get_default_device(self) -> str:
         """Get default compute device"""
-        if torch.cuda.is_available():
-            return "cuda"
-        elif torch.backends.mps.is_available():
-            return "mps"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return "cuda"
+            elif torch.backends.mps.is_available():
+                return "mps"
+        except (ImportError, OSError):
+            pass
         return "cpu"
     
     @property
@@ -93,6 +95,9 @@ class ChatterBoxWrapper:
             if progress_callback:
                 progress_callback(0.2)
             
+            import torch
+            import torchaudio
+            
             logger.info(f"Converting voice: {source_audio_path}")
             logger.info(f"Target voice: {target_voice_path}")
             
@@ -129,7 +134,11 @@ class ChatterBoxWrapper:
             del self._model
             self._model = None
             
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except (ImportError, OSError):
+                pass
             
             logger.info("ChatterBox model unloaded")

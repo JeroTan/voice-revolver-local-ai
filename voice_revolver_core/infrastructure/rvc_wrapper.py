@@ -3,7 +3,6 @@ RVC Wrapper - Infrastructure Layer
 Wraps RVC-Project v2 for voice conversion using pre-trained models
 """
 
-import torch
 import librosa
 import soundfile as sf
 from pathlib import Path
@@ -35,10 +34,14 @@ class RVCWrapper:
     
     def _get_default_device(self) -> str:
         """Get default compute device"""
-        if torch.cuda.is_available():
-            return "cuda"
-        elif torch.backends.mps.is_available():
-            return "mps"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return "cuda"
+            elif torch.backends.mps.is_available():
+                return "mps"
+        except (ImportError, OSError):
+            pass  # torch not available or CUDA toolkit missing
         return "cpu"
     
     @property

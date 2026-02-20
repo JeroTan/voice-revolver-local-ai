@@ -132,11 +132,28 @@ class StartupDialog:
                 self._select_device("cuda")  # Default to GPU
             else:
                 self.gpu_label.config(text="GPU: Not detected")
-                self.gpu_radio.config(text="GPU (May not work)", state="normal")
+                self.gpu_radio.config(text="GPU (No NVIDIA GPU found)", state="disabled")
                 self._select_device("cpu")
+                
+        except OSError as e:
+            # CUDA PyTorch installed but CUDA Toolkit missing
+            if "caffe2_nvrtc.dll" in str(e) or "cudnn" in str(e).lower() or "cublas" in str(e).lower():
+                self.gpu_label.config(text="GPU: RTX detected - CUDA Toolkit required")
+                self.gpu_radio.config(text="GPU (Install CUDA Toolkit 11.8)", state="disabled")
+                # Enable CPU and continue button
+                self.selected_device = "cpu"
+                self.device_selection.set("cpu")
+                self.device_info.config(
+                    text="⚠️ GPU needs CUDA Toolkit 11.8.\nDownload: developer.nvidia.com/cuda-11-8-0\nContinuing with CPU (slower but works).", 
+                    foreground="#ff8800"
+                )
+                self.continue_btn.config(state="normal")
+            else:
+                raise  # Re-raise if it's a different OSError
+                
         except Exception as e:
             self.gpu_label.config(text="GPU: Detection failed")
-            self.gpu_radio.config(text="GPU (Detection failed)", state="normal")
+            self.gpu_radio.config(text="GPU (Detection failed)", state="disabled")
             self._select_device("cpu")
     
     def _select_device(self, device):
@@ -255,7 +272,9 @@ class LoadingDialog:
                     percentage = 40 + int(prog * 50)
                     self.window.after(0, self.update_progress, percentage, f"Downloading {model}...", f"Progress: {int(prog * 100)}%")
                 
-                model_manager.download_all_models(download_callback)
+                # Run async download in sync context
+                import asyncio
+                asyncio.run(model_manager.download_all_models(download_callback))
             
             self.window.after(0, self.update_progress, 90, "Loading complete!", "All dependencies ready")
             
@@ -310,6 +329,9 @@ class VoiceRevolverApp:
         
         # Reference mode: 'audio' or 'model' (RVC zip)
         self.reference_mode = tk.StringVar(value="audio")
+        
+        # Separation model: 'demucs' (balanced) or 'mdx' (best vocals)
+        self.separation_model_var = tk.StringVar(value="demucs")
         
         # Gender selection (manual) for RVC model mode
         self.original_gender_var = tk.StringVar(value="male")  # Original voice gender
@@ -450,14 +472,23 @@ class VoiceRevolverApp:
                                      values=["cpu", "cuda"], state="readonly", width=10)
         device_combo.grid(row=0, column=3, sticky=tk.W, padx=5)
         
+        # Separation model selection
+        ttk.Label(settings_frame, text="Separation Model:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        separation_model_combo = ttk.Combobox(settings_frame, textvariable=self.separation_model_var,
+                                              values=["demucs", "mdx"], state="readonly", width=15)
+        separation_model_combo.grid(row=1, column=1, sticky=tk.W, padx=5)
+        ttk.Label(settings_frame, text="Demucs=Balanced | MDX=Best Vocals", 
+                 foreground="gray", font=("Segoe UI", 8)).grid(
+            row=1, column=2, columnspan=2, sticky=tk.W, padx=5)
+        
         # Pitch adjustment
-        ttk.Label(settings_frame, text="Pitch Shift:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Label(settings_frame, text="Pitch Shift:").grid(row=2, column=0, sticky=tk.W, pady=5)
         self.pitch_var = tk.IntVar(value=0)
         pitch_scale = ttk.Scale(settings_frame, from_=-12, to=12, variable=self.pitch_var, 
                                 orient=tk.HORIZONTAL, length=150)
-        pitch_scale.grid(row=1, column=1, sticky=tk.W, padx=5)
+        pitch_scale.grid(row=2, column=1, sticky=tk.W, padx=5)
         self.pitch_label = ttk.Label(settings_frame, text="0 semitones")
-        self.pitch_label.grid(row=1, column=2, columnspan=2, sticky=tk.W, padx=5)
+        self.pitch_label.grid(row=2, column=2, columnspan=2, sticky=tk.W, padx=5)
         pitch_scale.config(command=lambda v: self.pitch_label.config(text=f"{int(float(v))} semitones"))
         
         # Gender alignment checkbox (works for both audio and RVC modes)
@@ -465,18 +496,18 @@ class VoiceRevolverApp:
         gender_alignment_check = ttk.Checkbutton(settings_frame, text="Use Gender Alignment", 
                                               variable=self.use_gender_alignment_var,
                                               command=self._on_gender_alignment_change)
-        gender_alignment_check.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=5)
+        gender_alignment_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
         ttk.Label(settings_frame, text="Smart pitch per note + smooth transitions", 
                  foreground="gray", font=("Segoe UI", 8)).grid(
-            row=2, column=2, columnspan=2, sticky=tk.W, padx=5)
+            row=3, column=2, columnspan=2, sticky=tk.W, padx=5)
         
         # Gender detection results (hidden until processing)
         self.gender_info_label = ttk.Label(settings_frame, text="", foreground="blue")
-        self.gender_info_label.grid(row=3, column=0, columnspan=4, sticky=tk.W, pady=2)
+        self.gender_info_label.grid(row=4, column=0, columnspan=4, sticky=tk.W, pady=2)
         
         # Manual Gender Selection for RVC Model Mode (only visible when gender alignment is enabled)
         self.model_gender_frame = ttk.LabelFrame(settings_frame, text="Manual Gender Selection", padding=10)
-        self.model_gender_frame.grid(row=4, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
+        self.model_gender_frame.grid(row=5, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
         self.model_gender_frame.grid_remove()  # Hidden by default
         
         # Two-column layout: Gender controls on left, Threshold controls on right
@@ -609,12 +640,10 @@ class VoiceRevolverApp:
         self.vocal_only_var = tk.BooleanVar(value=True)
         vocal_only_check = ttk.Checkbutton(settings_frame, text="Use Vocal Only", 
                                            variable=self.vocal_only_var)
-        vocal_only_check.grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=5)
+        vocal_only_check.grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=5)
         ttk.Label(settings_frame, text="Use the separated vocal instead of the whole song", 
                  foreground="gray", font=("Segoe UI", 8)).grid(
-            row=5, column=2, columnspan=2, sticky=tk.W, padx=5)
-        
-        # Four Preview Players Section (moved up to row=3)
+            row=6, column=2, columnspan=2, sticky=tk.W, padx=5)
         preview_frame = ttk.LabelFrame(main_frame, text="Preview & Export", padding="10")
         preview_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
         
@@ -1007,6 +1036,7 @@ class VoiceRevolverApp:
             device = self.device_var.get()
             output_format = self.format_var.get()
             pitch = self.pitch_var.get()
+            separation_model = self.separation_model_var.get()
             
             self.log("Initializing processing components...")
             
@@ -1017,8 +1047,20 @@ class VoiceRevolverApp:
             
             self.log(f"FFmpeg: {ffmpeg_dir}")
             
-            # Initialize infrastructure wrappers
-            demucs_wrapper = DemucsWrapper(device)
+            # Initialize stem separator based on user selection
+            if separation_model == "mdx":
+                try:
+                    from voice_revolver_core.infrastructure.mdx_wrapper import MDXWrapper
+                    stem_separator = MDXWrapper(device)
+                    self.log("Using MDX for stem separation (best vocal isolation)")
+                except Exception as e:
+                    self.log(f"[!] MDX failed to load: {str(e)}")
+                    self.log("[!] Falling back to Demucs...")
+                    stem_separator = DemucsWrapper(device)
+                    self.log("Using Demucs for stem separation (balanced quality)")
+            else:
+                stem_separator = DemucsWrapper(device)
+                self.log("Using Demucs for stem separation (balanced quality)")
             
             # ChatterBox VC - Better quality than OpenVoice
             chatterbox_wrapper = ChatterBoxWrapper(device)
@@ -1033,7 +1075,7 @@ class VoiceRevolverApp:
             
             # Create voice replacement service
             service = VoiceReplacementService(
-                demucs_wrapper,
+                stem_separator,  # Can be either DemucsWrapper or MDXWrapper
                 chatterbox_wrapper,  # Using ChatterBox instead of openvoice_wrapper
                 None,  # voice_transformer (not implemented yet)
                 audio_mixer,
@@ -1055,7 +1097,8 @@ class VoiceRevolverApp:
                 original_gender=self.original_gender_var.get(),  # Manual original gender for RVC
                 threshold_low=self.threshold_low_var.get(),  # Pitch shift sensitivity - low
                 threshold_mid=self.threshold_mid_var.get(),  # Pitch shift sensitivity - mid
-                threshold_high=self.threshold_high_var.get()  # Pitch shift sensitivity - high
+                threshold_high=self.threshold_high_var.get(),  # Pitch shift sensitivity - high
+                separation_model=separation_model  # "demucs" (balanced) or "mdx" (best vocals)
             )
             
             # Progress callback - receives (percentage, stage) args

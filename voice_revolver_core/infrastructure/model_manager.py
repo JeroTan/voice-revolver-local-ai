@@ -25,6 +25,10 @@ class ModelManager:
     # Demucs model info (auto-downloaded by demucs package)
     DEMUCS_MODEL_NAME = "htdemucs_ft"
     
+    # MDX model info (OPTIONAL - installed in separate venv-mdx)
+    # See AGENT_MEMORY.md for MDX installation instructions
+    MDX_MODEL_NAME = "MDX23C-8KFFT-InstVoc_HQ.ckpt"
+    
     def __init__(self, models_path: Path):
         self._models_path = models_path
         self._models_path.mkdir(parents=True, exist_ok=True)
@@ -45,6 +49,9 @@ class ModelManager:
         
         # Demucs models are downloaded by the package, we just check if package is available
         self._downloaded_models.add("demucs")
+        
+        # MDX is optional (separate venv-mdx), not checked here
+        # MDX availability is checked in mdx_wrapper.py at runtime
     
     @property
     def models_path(self) -> Path:
@@ -70,6 +77,7 @@ class ModelManager:
             return self.openvoice_path
         elif model_name == "demucs":
             return self._models_path / "demucs"
+        # MDX is in separate venv-mdx, not managed here
         return None
     
     async def download_all_models(
@@ -86,6 +94,8 @@ class ModelManager:
         
         # Demucs is handled by the demucs package - just mark as available
         self._downloaded_models.add("demucs")
+        
+        # MDX is optional (separate venv-mdx), not auto-downloaded
         
         for model_name, download_func in models:
             try:
@@ -181,6 +191,7 @@ class ModelManager:
         return {
             "demucs": "demucs" in self._downloaded_models,
             "openvoice": "openvoice" in self._downloaded_models,
+            # MDX not included - it's optional in separate venv-mdx
         }
     
     def clear_cache(self) -> int:

@@ -3,8 +3,6 @@ Demucs Wrapper - Infrastructure Layer
 Wraps Demucs for audio stem separation
 """
 
-import torch
-import torchaudio
 from pathlib import Path
 from typing import Optional, Tuple
 import logging
@@ -27,8 +25,12 @@ class DemucsWrapper:
     
     def _get_default_device(self) -> str:
         """Get default compute device"""
-        if torch.cuda.is_available():
-            return "cuda"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return "cuda"
+        except (ImportError, OSError):
+            pass
         return "cpu"
     
     @property
@@ -85,6 +87,8 @@ class DemucsWrapper:
         
         try:
             from demucs.apply import apply_model
+            import torch
+            import torchaudio
             
             # Create output directory
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -167,7 +171,11 @@ class DemucsWrapper:
             del self._model
             self._model = None
             
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except (ImportError, OSError):
+                pass
             
             logger.info("Demucs model unloaded")
