@@ -16,7 +16,19 @@ sys.path.insert(0, str(project_root))
 from rvc.infer.infer import VoiceConverter
 
 
-def run_rvc_inference(model_path, index_path, input_audio, output_audio, f0_method="rmvpe", f0_up_key=0):
+def run_rvc_inference(
+    model_path, 
+    index_path, 
+    input_audio, 
+    output_audio, 
+    f0_method="rmvpe", 
+    f0_up_key=0,
+     index_rate=0.75,      # DEFAULT: 0.75 (Balanced timbre - decrease to 0.5-0.6 for more natural, increase to 0.9 for more precise)
+    filter_radius=3,      # DEFAULT: 3 (Natural pitch - decrease to 2 for more vibrato, increase to 5-7 for smoother/robotic)
+    resample_sr=0,        # DEFAULT: 0 (Auto from model - set to 40000/48000 for custom sample rate)
+    rms_mix_rate=0.25,    # DEFAULT: 0.25 (Slight dynamics preservation - decrease to 0.15 for more expression, increase to 0.5 for flatter)
+    protect=0.33          # DEFAULT: 0.33 (Balanced consonants - decrease to 0.2 for smoother, increase to 0.4 for crisper)
+):
     """
     Perform voice conversion using Applio's RVC implementation.
     
@@ -27,6 +39,25 @@ def run_rvc_inference(model_path, index_path, input_audio, output_audio, f0_meth
         output_audio: Path to output audio file
         f0_method: F0 extraction method (e.g., "rmvpe", "crepe", "fcpe")
         f0_up_key: Pitch shift in semitones
+        index_rate: Index influence strength (0.0-1.0)
+                   DEFAULT: 0.75 - Balanced timbre match
+                   NATURAL: 0.5-0.6 - More organic, less precise
+                   PRECISE: 0.9-1.0 - Perfect match but can sound robotic
+        filter_radius: Median filter for pitch curve (0-7)
+                      DEFAULT: 3 - Natural with slight smoothing
+                      VIBRATO: 2 - Preserves natural pitch wobbles
+                      SMOOTH: 5-7 - Auto-tune effect, removes vibrato
+        resample_sr: Output sample rate (0=auto from model)
+                    DEFAULT: 0 - Use model's native sample rate
+                    CUSTOM: 40000/48000 - Force specific sample rate
+        rms_mix_rate: Volume envelope mixing (0.0-1.0)
+                     DEFAULT: 0.25 - 75% converted + 25% source dynamics
+                     EXPRESSIVE: 0.15 - More converted voice dynamics
+                     STABLE: 0.3-0.5 - More source voice volume
+        protect: Protect voiceless consonants (0.0-0.5)
+                DEFAULT: 0.33 - Balanced consonant clarity
+                SMOOTH: 0.2 - Less protection, more cohesive
+                CRISP: 0.4-0.5 - Sharper "s", "t", "k" sounds
     """
     try:
         print(f"[RVC] Processing audio: {input_audio}")
@@ -34,11 +65,17 @@ def run_rvc_inference(model_path, index_path, input_audio, output_audio, f0_meth
         print(f"[RVC] Index: {index_path}")
         print(f"[RVC] Pitch shift: {f0_up_key} semitones")
         print(f"[RVC] F0 method: {f0_method}")
+        print(f"[RVC] Advanced parameters:")
+        print(f"  - Index rate: {index_rate} (feature retrieval strength)")
+        print(f"  - Filter radius: {filter_radius} (pitch smoothing)")
+        print(f"  - Resample SR: {resample_sr} (output sample rate)")
+        print(f"  - RMS mix rate: {rms_mix_rate} (volume envelope)")
+        print(f"  - Protect: {protect} (consonant protection)")
         
         # Initialize Applio's VoiceConverter
         converter = VoiceConverter()
         
-        # Perform conversion using Applio's API
+        # Perform conversion using Applio's API with all advanced parameters
         converter.convert_audio(
             audio_input_path=input_audio,
             audio_output_path=output_audio,
@@ -46,9 +83,10 @@ def run_rvc_inference(model_path, index_path, input_audio, output_audio, f0_meth
             index_path=index_path,
             pitch=f0_up_key,
             f0_method=f0_method,
-            index_rate=0.75,
-            volume_envelope=0.25,
-            protect=0.33,
+            index_rate=index_rate,                    # Use provided index_rate
+            filter_radius=filter_radius,              # Use provided filter_radius
+            volume_envelope=rms_mix_rate,             # Use provided rms_mix_rate
+            protect=protect,                          # Use provided protect
             hop_length=128,
             split_audio=False,  # Don't split short audio clips
             f0_autotune=False,
@@ -73,7 +111,7 @@ def run_rvc_inference(model_path, index_path, input_audio, output_audio, f0_meth
 
 if __name__ == "__main__":
     if len(sys.argv) < 5:
-        print("Usage: python rvc_standalone.py <model.pth> <model.index> <input.wav> <output.wav> [f0_method] [f0_up_key]")
+        print("Usage: python rvc_standalone.py <model.pth> <model.index> <input.wav> <output.wav> [f0_method] [f0_up_key] [index_rate] [filter_radius] [resample_sr] [rms_mix_rate] [protect]")
         sys.exit(1)
     
     model_path = sys.argv[1]
@@ -83,4 +121,23 @@ if __name__ == "__main__":
     f0_method = sys.argv[5] if len(sys.argv) > 5 else "rmvpe"
     f0_up_key = int(sys.argv[6]) if len(sys.argv) > 6 else 0
     
-    sys.exit(run_rvc_inference(model_path, index_path, input_audio, output_audio, f0_method, f0_up_key))
+    # Advanced parameters (with defaults)
+    index_rate = float(sys.argv[7]) if len(sys.argv) > 7 else 0.75
+    filter_radius = int(sys.argv[8]) if len(sys.argv) > 8 else 3
+    resample_sr = int(sys.argv[9]) if len(sys.argv) > 9 else 0
+    rms_mix_rate = float(sys.argv[10]) if len(sys.argv) > 10 else 0.25
+    protect = float(sys.argv[11]) if len(sys.argv) > 11 else 0.33
+    
+    sys.exit(run_rvc_inference(
+        model_path, 
+        index_path, 
+        input_audio, 
+        output_audio, 
+        f0_method, 
+        f0_up_key,
+        index_rate,
+        filter_radius,
+        resample_sr,
+        rms_mix_rate,
+        protect
+    ))

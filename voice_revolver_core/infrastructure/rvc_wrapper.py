@@ -155,11 +155,11 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
         output_path: Path,
         f0_method: Optional[str] = None,
         f0_up_key: int = 0,
-        index_rate: float = 0.75,
-        filter_radius: int = 3,
-        resample_sr: int = 0,
-        rms_mix_rate: float = 0.25,
-        protect: float = 0.33,
+        index_rate: float = 0.75,        # Index influence (0.0-1.0, higher = more accurate timbre)
+        filter_radius: int = 3,          # Pitch smoothing (0-7, higher = smoother)
+        resample_sr: int = 0,            # Output sample rate (0=auto from model)
+        rms_mix_rate: float = 0.25,      # Volume envelope mixing (0.0-1.0)
+        protect: float = 0.33,           # Protect voiceless consonants (0.0-0.5)
         progress_callback=None
     ) -> Tuple[Optional[Path], Optional[str]]:
         """
@@ -170,7 +170,15 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
             output_path: Path to save converted audio
             f0_method: Pitch extraction method (rmvpe, crepe, harvest, dio)
             f0_up_key: Pitch shift in semitones
-            (other parameters currently unused in standalone version)
+            index_rate: Feature retrieval strength (0.0-1.0, default 0.75)
+                       Higher = more index influence = better timbre match
+            filter_radius: Median filtering for pitch curve (0-7, default 3)
+                          Higher = smoother pitch, less vibrato
+            resample_sr: Output sample rate in Hz (0=auto, e.g. 40000, 48000)
+            rms_mix_rate: Volume envelope mixing (0.0-1.0, default 0.25)
+                         0.0=converted only, 1.0=source only, 0.25=75%/25% mix
+            protect: Protect voiceless consonants (0.0-0.5, default 0.33)
+                    Prevents over-smoothing of "s", "t", "k" sounds
             
         Returns:
             (output_path, error_message)
@@ -180,6 +188,8 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
         
         try:
             logger.info(f"Converting voice with RVC (subprocess): {source_audio_path}")
+            logger.info(f"Advanced params: index_rate={index_rate}, filter_radius={filter_radius}, "
+                       f"resample_sr={resample_sr}, rms_mix_rate={rms_mix_rate}, protect={protect}")
             
             # Use provided f0_method or default
             f0_method = f0_method or self._f0_method
@@ -197,12 +207,13 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
                     "RVC environment not found. Please run:\n"
                     "  py -3.11 -m venv venv-rvc\n"
                     "  .\\venv-rvc\\Scripts\\python.exe -m pip install numpy==1.23.5 scipy==1.10.1\n"
-                    "  .\\venv-rvc\\Scripts\\python.exe -m pip install rvc-python faiss-cpu praat-parselmouth pyworld soundfile"
+                    "  .\\venv-rvc\\Scripts\\python.exe -m pip install rvc-python praat-parselmouth pyworld soundfile\n"
+                    "  .\\venv-rvc\\Scripts\\python.exe -m pip install faiss-gpu  # GPU-accelerated (or faiss-cpu for CPU-only)"
                 )
                 logger.error(error_msg)
                 return None, error_msg
             
-            # Call RVC via subprocess using dedicated venv-rvc Python
+            # Call RVC via subprocess using dedicated venv-rvc Python with ALL parameters
             import subprocess
             cmd = [
                 str(rvc_python),
@@ -212,7 +223,12 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
                 str(source_audio_path),
                 str(output_path),
                 f0_method,
-                str(f0_up_key)
+                str(f0_up_key),
+                str(index_rate),      # Advanced param 1
+                str(filter_radius),   # Advanced param 2
+                str(resample_sr),     # Advanced param 3
+                str(rms_mix_rate),    # Advanced param 4
+                str(protect)          # Advanced param 5
             ]
             
             logger.info(f"Running RVC subprocess: {' '.join(cmd)}")
@@ -259,7 +275,11 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
             
             # Clear CUDA cache if using GPU
             if self._device == "cuda":
-                torch.cuda.empty_cache()
+                try:
+                    import torch
+                    torch.cuda.empty_cache()
+                except (ImportError, OSError):
+                    pass
             
             logger.info("RVC model unloaded")
         except Exception as e:

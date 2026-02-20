@@ -399,9 +399,16 @@ python -m venv venv-rvc
 
 # 3. Install Applio dependencies
 pip install numpy==2.3.5 scipy==1.16.3 librosa==0.11.0 soundfile==0.12.1
-pip install transformers==4.44.2 faiss-cpu==1.13.2 torchcrepe torchfcpe einops
+pip install transformers==4.44.2 torchcrepe torchfcpe einops
 pip install noisereduce pedalboard soxr stftpitchshift wget webrtcvad-wheels
 pip install omegaconf>=2.0.6 matplotlib==3.10.8
+
+# 3a. Install FAISS (choose CPU or GPU version)
+# For GPU (recommended if you have NVIDIA GPU with CUDA):
+pip install faiss-gpu
+
+# OR for CPU-only (slower index search but still works):
+pip install faiss-cpu==1.13.2
 
 # 4. Install Applio RVC module
 git clone --depth 1 https://github.com/IAHispano/Applio.git applio_temp
@@ -430,7 +437,16 @@ Invoke-WebRequest `
 - **Model format:** .zip containing .pth (weights) + .index (FAISS retrieval)
 - **F0 methods:** rmvpe (default), crepe, fcpe, hybrid combinations
 - **Embedders:** contentvec (default), spin, chinese-hubert, japanese-hubert
-- **GPU auto-detection** via `torch.cuda.is_available()`
+- **GPU acceleration:** RVC neural network runs on CUDA/MPS/CPU (auto-detected)
+  - Main inference: Uses PyTorch GPU acceleration
+  - Index search: Uses FAISS (GPU via faiss-gpu, CPU via faiss-cpu)
+  - Performance: GPU ~10x faster than CPU for voice conversion
+- **Advanced parameters:** Now fully implemented and passed to Applio:
+  - `index_rate`: Feature retrieval strength (0.0-1.0, default 0.75)
+  - `filter_radius`: Median filter for pitch smoothing (0-7, default 3)
+  - `resample_sr`: Output sample rate (0=auto from model)
+  - `rms_mix_rate`: Volume envelope mixing (0.0-1.0, default 0.25)
+  - `protect`: Protect voiceless consonants (0.0-0.5, default 0.33)
 - **Temp directory management** for model extraction from zip
 - **Model cleanup** after conversion to free GPU memory
 
