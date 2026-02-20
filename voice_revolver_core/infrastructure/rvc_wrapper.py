@@ -232,7 +232,7 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
             if not output_path.exists():
                 return None, "RVC conversion succeeded but output file not created"
             
-            logger.info(f"✅ Voice converted successfully: {output_path}")
+            logger.info(f"[SUCCESS] Voice converted successfully: {output_path}")
             return output_path, None
             
         except subprocess.TimeoutExpired:

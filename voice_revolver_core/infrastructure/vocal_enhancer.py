@@ -49,7 +49,8 @@ class VocalEnhancer:
         self, 
         input_path: Path, 
         output_path: Path,
-        noise_reduction: float = 0.8
+        noise_reduction: float = 0.8,
+        remove_reverb: bool = True
     ) -> Tuple[Optional[Path], Optional[str]]:
         """
         Enhance vocal audio quality while preserving original loudness.
@@ -58,6 +59,7 @@ class VocalEnhancer:
             input_path: Path to input audio file
             output_path: Path to save enhanced audio
             noise_reduction: Noise reduction strength (0-1)
+            remove_reverb: Apply reverb removal (drying effect)
             
         Returns:
             (output_path, error_message)
@@ -89,12 +91,43 @@ class VocalEnhancer:
                 prop_decrease=noise_reduction
             )
             
+            # 3.5. Reverb removal (dry the vocal)
+            if remove_reverb:
+                logger.info("Applying reverb removal (drying vocal)...")
+                # Spectral gating approach: removes reverb tails
+                # Use non-stationary reduction to target reverb (time-varying)
+                cleaned = self._nr.reduce_noise(
+                    y=cleaned,
+                    sr=sr,
+                    stationary=False,  # Better for reverb (time-varying)
+                    prop_decrease=0.6,  # Moderate reduction
+                    freq_mask_smooth_hz=500,  # Smooth frequency transitions
+                    time_mask_smooth_ms=50    # Smooth time transitions (catches reverb tails)
+                )
+                logger.info("Reverb reduction complete")
+            
             # 4. Apply professional audio effects
             logger.info("Applying audio effects...")
-            board = self._pb.Pedalboard([
+            
+            # Build effects chain
+            effects = [
                 # Remove low-frequency rumble
                 self._pb.HighpassFilter(cutoff_frequency_hz=80),
-                
+            ]
+            
+            # Add gate for reverb removal (cuts off quiet reverb tails)
+            if remove_reverb:
+                effects.append(
+                    self._pb.NoiseGate(
+                        threshold_db=-40,   # Cut signals below -40dB (reverb tails)
+                        ratio=10,           # Aggressive gating
+                        attack_ms=1.0,      # Fast attack
+                        release_ms=100.0    # Moderate release (avoid choppy sound)
+                    )
+                )
+            
+            # Add remaining effects
+            effects.extend([
                 # Gentle dynamics control
                 self._pb.Compressor(
                     threshold_db=-25, 
@@ -119,6 +152,7 @@ class VocalEnhancer:
                 self._pb.Limiter(threshold_db=-1.0)
             ])
             
+            board = self._pb.Pedalboard(effects)
             processed = board(cleaned, sr)
             
             # 5. Normalize back to ORIGINAL loudness (preserve mix balance)

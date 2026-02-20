@@ -52,7 +52,15 @@ class StartupDialog:
         
         self.window = tk.Tk()
         self.window.title("Voice Revolver AI - Setup")
-        self.window.geometry("500x500")
+        
+        # Center window on screen
+        window_width = 500
+        window_height = 500
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.window.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.window.resizable(False, False)
         
         self._build_ui()
@@ -166,11 +174,19 @@ class LoadingDialog:
         
         self.window = tk.Tk()
         self.window.title("Voice Revolver AI - Loading")
-        self.window.geometry("450x250")
+        
+        # Center window on screen
+        window_width = 450
+        window_height = 250
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.window.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.window.resizable(False, False)
         
-        # Prevent closing
-        self.window.protocol("WM_DELETE_WINDOW", lambda: None)
+        # Remove window decorations (no close/minimize buttons)
+        self.window.overrideredirect(True)
         
         self._build_ui()
         
@@ -272,7 +288,15 @@ class VoiceRevolverApp:
     def __init__(self, root, device, app_data_path):
         self.root = root
         self.root.title("Voice Revolver AI - Local Voice Replacement")
-        self.root.geometry("900x920")  # Larger window for 6 preview players + volume control
+        
+        # Set window size and position at top-left with margin
+        window_width = 950
+        window_height = 1100  # Increased for threshold controls
+        margin = 20
+        self.root.geometry(f"{window_width}x{window_height}+{margin}+{margin}")
+        
+        # Make window resizable
+        self.root.minsize(850, 750)  # Increased minimum height
         
         # Configuration
         self.device = device
@@ -286,6 +310,15 @@ class VoiceRevolverApp:
         
         # Reference mode: 'audio' or 'model' (RVC zip)
         self.reference_mode = tk.StringVar(value="audio")
+        
+        # Gender selection (manual) for RVC model mode
+        self.original_gender_var = tk.StringVar(value="male")  # Original voice gender
+        self.model_gender_var = tk.StringVar(value="male")  # Model gender (default: male, consistent with radio button order)
+        
+        # Pitch shift threshold controls (for adaptive shifting sensitivity)
+        self.threshold_low_var = tk.DoubleVar(value=180.0)  # Hz - Low threshold (aggressive shift below this)
+        self.threshold_mid_var = tk.DoubleVar(value=230.0)  # Hz - Mid threshold (moderate shift)
+        self.threshold_high_var = tk.DoubleVar(value=280.0)  # Hz - High threshold (minimal shift above this)
         
         # OpenVoice-specific params (kept for compatibility, not used with ChatterBox)
         self.style_var = tk.StringVar(value="default")
@@ -357,11 +390,15 @@ class VoiceRevolverApp:
         menubar.add_cascade(label="View", menu=view_menu)
         view_menu.add_command(label="Show Logs", command=self._show_log_window)
         
-        # Main container
+        # Main container with responsive grid
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
+        
+        # Configure main_frame grid weights for responsive layout
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(3, weight=1)  # Preview section expands
         
         # Title
         title_label = ttk.Label(main_frame, text="Voice Revolver AI", font=("Arial", 16, "bold"))
@@ -388,7 +425,7 @@ class VoiceRevolverApp:
         mode_frame.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
         
         ttk.Label(mode_frame, text="Reference Type:", foreground="gray", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(mode_frame, text="Audio File (ChatterBox)", variable=self.reference_mode, 
+        ttk.Radiobutton(mode_frame, text="Audio File", variable=self.reference_mode, 
                        value="audio", command=self._on_reference_mode_change).pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(mode_frame, text="RVC Model (.zip)", variable=self.reference_mode, 
                        value="model", command=self._on_reference_mode_change).pack(side=tk.LEFT, padx=5)
@@ -422,6 +459,103 @@ class VoiceRevolverApp:
         self.pitch_label = ttk.Label(settings_frame, text="0 semitones")
         self.pitch_label.grid(row=1, column=2, columnspan=2, sticky=tk.W, padx=5)
         pitch_scale.config(command=lambda v: self.pitch_label.config(text=f"{int(float(v))} semitones"))
+        
+        # Gender alignment checkbox (works for both audio and RVC modes)
+        self.use_gender_alignment_var = tk.BooleanVar(value=False)  # OFF by default
+        gender_alignment_check = ttk.Checkbutton(settings_frame, text="Use Gender Alignment", 
+                                              variable=self.use_gender_alignment_var,
+                                              command=self._on_gender_alignment_change)
+        gender_alignment_check.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=5)
+        ttk.Label(settings_frame, text="Smart pitch per note + smooth transitions", 
+                 foreground="gray", font=("Segoe UI", 8)).grid(
+            row=2, column=2, columnspan=2, sticky=tk.W, padx=5)
+        
+        # Gender detection results (hidden until processing)
+        self.gender_info_label = ttk.Label(settings_frame, text="", foreground="blue")
+        self.gender_info_label.grid(row=3, column=0, columnspan=4, sticky=tk.W, pady=2)
+        
+        # Manual Gender Selection for RVC Model Mode (only visible when gender alignment is enabled)
+        self.model_gender_frame = ttk.LabelFrame(settings_frame, text="Manual Gender Selection", padding=10)
+        self.model_gender_frame.grid(row=4, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
+        self.model_gender_frame.grid_remove()  # Hidden by default
+        
+        # Two-column layout: Gender controls on left, Threshold controls on right
+        content_frame = ttk.Frame(self.model_gender_frame)
+        content_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Left column: Gender selection
+        gender_column = ttk.Frame(content_frame)
+        gender_column.grid(row=0, column=0, sticky=(tk.W, tk.N), padx=(0, 20))
+        
+        # Original voice gender
+        original_frame = ttk.Frame(gender_column)
+        original_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(original_frame, text="Original voice is:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(original_frame, text="Male", variable=self.original_gender_var, 
+                       value="male").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(original_frame, text="Female", variable=self.original_gender_var, 
+                       value="female").pack(side=tk.LEFT, padx=5)
+        
+        # Model voice gender
+        model_frame = ttk.Frame(gender_column)
+        model_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(model_frame, text="RVC model voice is:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(model_frame, text="Male", variable=self.model_gender_var, 
+                       value="male").pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(model_frame, text="Female", variable=self.model_gender_var, 
+                       value="female").pack(side=tk.LEFT, padx=5)
+        
+        # Right column: Pitch Shift Threshold Controls (sensitivity)
+        threshold_column = ttk.Frame(content_frame)
+        threshold_column.grid(row=0, column=1, sticky=(tk.W, tk.N))
+        
+        ttk.Label(threshold_column, text="Shift Sensitivity (Hz):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(threshold_column, text="Lower values = more aggressive shift | Higher = subtle", 
+                 foreground="gray", font=("Segoe UI", 8)).pack(anchor=tk.W, pady=(0, 2))
+        ttk.Label(threshold_column, text="If output sounds too similar, LOWER these values", 
+                 foreground="blue", font=("Segoe UI", 8, "italic")).pack(anchor=tk.W, pady=(0, 5))
+        
+        # Low Threshold
+        low_frame = ttk.Frame(threshold_column)
+        low_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(low_frame, text="Low:", width=5).pack(side=tk.LEFT)
+        low_slider = ttk.Scale(low_frame, from_=100, to=250, variable=self.threshold_low_var,
+                              orient=tk.HORIZONTAL, length=100, command=self._on_threshold_low_change)
+        low_slider.pack(side=tk.LEFT, padx=5)
+        self.threshold_low_entry = ttk.Entry(low_frame, width=5)
+        self.threshold_low_entry.insert(0, "180")
+        self.threshold_low_entry.pack(side=tk.LEFT, padx=2)
+        self.threshold_low_entry.bind('<Return>', self._on_threshold_low_entry)
+        self.threshold_low_entry.bind('<FocusOut>', self._on_threshold_low_entry)
+        ttk.Button(low_frame, text="↺", width=3, command=lambda: self._reset_threshold('low')).pack(side=tk.LEFT, padx=2)
+        
+        # Mid Threshold
+        mid_frame = ttk.Frame(threshold_column)
+        mid_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(mid_frame, text="Mid:", width=5).pack(side=tk.LEFT)
+        mid_slider = ttk.Scale(mid_frame, from_=150, to=300, variable=self.threshold_mid_var,
+                              orient=tk.HORIZONTAL, length=100, command=self._on_threshold_mid_change)
+        mid_slider.pack(side=tk.LEFT, padx=5)
+        self.threshold_mid_entry = ttk.Entry(mid_frame, width=5)
+        self.threshold_mid_entry.insert(0, "230")
+        self.threshold_mid_entry.pack(side=tk.LEFT, padx=2)
+        self.threshold_mid_entry.bind('<Return>', self._on_threshold_mid_entry)
+        self.threshold_mid_entry.bind('<FocusOut>', self._on_threshold_mid_entry)
+        ttk.Button(mid_frame, text="↺", width=3, command=lambda: self._reset_threshold('mid')).pack(side=tk.LEFT, padx=2)
+        
+        # High Threshold
+        high_frame = ttk.Frame(threshold_column)
+        high_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(high_frame, text="High:", width=5).pack(side=tk.LEFT)
+        high_slider = ttk.Scale(high_frame, from_=200, to=350, variable=self.threshold_high_var,
+                              orient=tk.HORIZONTAL, length=100, command=self._on_threshold_high_change)
+        high_slider.pack(side=tk.LEFT, padx=5)
+        self.threshold_high_entry = ttk.Entry(high_frame, width=5)
+        self.threshold_high_entry.insert(0, "280")
+        self.threshold_high_entry.pack(side=tk.LEFT, padx=2)
+        self.threshold_high_entry.bind('<Return>', self._on_threshold_high_entry)
+        self.threshold_high_entry.bind('<FocusOut>', self._on_threshold_high_entry)
+        ttk.Button(high_frame, text="↺", width=3, command=lambda: self._reset_threshold('high')).pack(side=tk.LEFT, padx=2)
         
         # =================================================================
         # OpenVoice-Specific Controls (Disabled for ChatterBox)
@@ -475,26 +609,14 @@ class VoiceRevolverApp:
         self.vocal_only_var = tk.BooleanVar(value=True)
         vocal_only_check = ttk.Checkbutton(settings_frame, text="Use Vocal Only", 
                                            variable=self.vocal_only_var)
-        vocal_only_check.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=5)
+        vocal_only_check.grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=5)
         ttk.Label(settings_frame, text="Use the separated vocal instead of the whole song", 
                  foreground="gray", font=("Segoe UI", 8)).grid(
-            row=4, column=2, columnspan=2, sticky=tk.W, padx=5)
+            row=5, column=2, columnspan=2, sticky=tk.W, padx=5)
         
-        # Progress Section
-        progress_frame = ttk.LabelFrame(main_frame, text="Progress", padding="10")
-        progress_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        
-        self.progress_bar = ttk.Progressbar(progress_frame, mode="determinate", length=400)
-        self.progress_bar.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
-        
-        self.status_label = ttk.Label(progress_frame, text="Ready", foreground="green")
-        self.status_label.grid(row=1, column=0, sticky=tk.W)
-        
-        progress_frame.columnconfigure(0, weight=1)
-        
-        # Four Preview Players Section
+        # Four Preview Players Section (moved up to row=3)
         preview_frame = ttk.LabelFrame(main_frame, text="Preview & Export", padding="10")
-        preview_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        preview_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
         
         # Volume control at the top
         volume_frame = ttk.Frame(preview_frame)
@@ -568,9 +690,9 @@ class VoiceRevolverApp:
         
         preview_frame.columnconfigure(0, weight=1)
         
-        # Buttons Section
+        # Buttons Section - sticks to bottom
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=5, column=0, columnspan=3, pady=10)
+        button_frame.grid(row=4, column=0, columnspan=3, sticky=tk.S, pady=10)
         
         self.start_btn = ttk.Button(button_frame, text="Start Processing", command=self._start_processing, 
                                      state="disabled")
@@ -584,14 +706,23 @@ class VoiceRevolverApp:
                                       state="disabled")
         self.cancel_btn.grid(row=0, column=2, padx=5)
         
-        # Configure grid weights
-        main_frame.columnconfigure(0, weight=1)
+        # Progress Section (moved below buttons)
+        progress_frame = ttk.LabelFrame(main_frame, text="Progress", padding="10")
+        progress_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        self.progress_bar = ttk.Progressbar(progress_frame, mode="determinate", length=400)
+        self.progress_bar.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        
+        self.status_label = ttk.Label(progress_frame, text="Ready", foreground="green")
+        self.status_label.grid(row=1, column=0, sticky=tk.W)
+        
+        progress_frame.columnconfigure(0, weight=1)
     
     def _create_log_window(self):
         """Create separate log window"""
         self.log_window = tk.Toplevel(self.root)
         self.log_window.title("Voice Revolver AI - Logs")
-        self.log_window.geometry("700x850")
+        self.log_window.geometry("700x1050")  # Increased to match main window height
         
         # Position to the right of main window
         self.root.update_idletasks()
@@ -695,6 +826,20 @@ class VoiceRevolverApp:
             self.log(f"Reference {mode_text}: {filename}")
             self._check_ready()
     
+    def _on_gender_alignment_change(self):
+        """Handle gender alignment checkbox toggle"""
+        enabled = self.use_gender_alignment_var.get()
+        mode = self.reference_mode.get()
+        
+        # Show/hide gender selector based on checkbox state and mode
+        if enabled and mode == "model":
+            self.model_gender_frame.grid()  # Show manual gender selector for RVC
+        else:
+            self.model_gender_frame.grid_remove()  # Hide gender selector
+        
+        status = "enabled" if enabled else "disabled"
+        self.log(f"Gender alignment {status}")
+    
     def _on_reference_mode_change(self):
         """Handle reference mode toggle between audio and model"""
         mode = self.reference_mode.get()
@@ -704,25 +849,89 @@ class VoiceRevolverApp:
         self.reference_label.config(text="No file selected", foreground="gray")
         self.log(f"Reference mode changed to: {mode.upper()}")
         
-        # Show info for model mode (advanced feature)
-        if mode == "model":
-            result = messagebox.askokcancel(
-                "RVC Model Mode",
-                "📦 RVC Model Mode - Advanced Voice Conversion\n\n"
-                "Requirements:\n"
-                "• Pre-trained RVC model (.zip with .pth + .index files)\n"
-                "• numpy 1.23.5, scipy 1.10.1 (see requirements.txt)\n"
-                "• rvc-python, faiss-cpu, praat-parselmouth, pyworld\n\n"
-                "Note: Uses subprocess approach to handle library compatibility.\n\n"
-                "Do you want to continue with Model mode?",
-                icon='info'
-            )
-            if not result:
-                # User cancelled, switch back to audio mode
-                self.reference_mode.set("audio")
-                return
+        # Show/hide gender selector based on mode AND gender alignment checkbox
+        gender_enabled = self.use_gender_alignment_var.get()
+        if mode == "model" and gender_enabled:
+            self.model_gender_frame.grid()  # Show manual gender selector for RVC
+        else:
+            self.model_gender_frame.grid_remove()  # Hide gender selector
             
         self._check_ready()
+    
+    def _on_threshold_low_change(self, value):
+        """Update low threshold entry when slider changes"""
+        self.threshold_low_entry.delete(0, tk.END)
+        self.threshold_low_entry.insert(0, f"{float(value):.0f}")
+    
+    def _on_threshold_mid_change(self, value):
+        """Update mid threshold entry when slider changes"""
+        self.threshold_mid_entry.delete(0, tk.END)
+        self.threshold_mid_entry.insert(0, f"{float(value):.0f}")
+    
+    def _on_threshold_high_change(self, value):
+        """Update high threshold entry when slider changes"""
+        self.threshold_high_entry.delete(0, tk.END)
+        self.threshold_high_entry.insert(0, f"{float(value):.0f}")
+    
+    def _on_threshold_low_entry(self, event=None):
+        """Update low threshold slider when entry changes"""
+        try:
+            value = float(self.threshold_low_entry.get())
+            value = max(100, min(200, value))  # Clamp to valid range
+            self.threshold_low_var.set(value)
+            self.threshold_low_entry.delete(0, tk.END)
+            self.threshold_low_entry.insert(0, f"{value:.0f}")
+        except ValueError:
+            self.threshold_low_entry.delete(0, tk.END)
+            self.threshold_low_entry.insert(0, f"{self.threshold_low_var.get():.0f}")
+    
+    def _on_threshold_mid_entry(self, event=None):
+        """Update mid threshold slider when entry changes"""
+        try:
+            value = float(self.threshold_mid_entry.get())
+            value = max(150, min(220, value))  # Clamp to valid range
+            self.threshold_mid_var.set(value)
+            self.threshold_mid_entry.delete(0, tk.END)
+            self.threshold_mid_entry.insert(0, f"{value:.0f}")
+        except ValueError:
+            self.threshold_mid_entry.delete(0, tk.END)
+            self.threshold_mid_entry.insert(0, f"{self.threshold_mid_var.get():.0f}")
+    
+    def _on_threshold_high_entry(self, event=None):
+        """Update high threshold slider when entry changes"""
+        try:
+            value = float(self.threshold_high_entry.get())
+            value = max(180, min(280, value))  # Clamp to valid range
+            self.threshold_high_var.set(value)
+            self.threshold_high_entry.delete(0, tk.END)
+            self.threshold_high_entry.insert(0, f"{value:.0f}")
+        except ValueError:
+            self.threshold_high_entry.delete(0, tk.END)
+            self.threshold_high_entry.insert(0, f"{self.threshold_high_var.get():.0f}")
+    
+    def _reset_threshold(self, threshold_type):
+        """Reset threshold to default value"""
+        defaults = {
+            'low': 180.0,
+            'mid': 230.0,
+            'high': 280.0
+        }
+        
+        if threshold_type == 'low':
+            self.threshold_low_var.set(defaults['low'])
+            self.threshold_low_entry.delete(0, tk.END)
+            self.threshold_low_entry.insert(0, f"{defaults['low']:.0f}")
+            self.log(f"Reset low threshold to {defaults['low']:.0f}Hz")
+        elif threshold_type == 'mid':
+            self.threshold_mid_var.set(defaults['mid'])
+            self.threshold_mid_entry.delete(0, tk.END)
+            self.threshold_mid_entry.insert(0, f"{defaults['mid']:.0f}")
+            self.log(f"Reset mid threshold to {defaults['mid']:.0f}Hz")
+        elif threshold_type == 'high':
+            self.threshold_high_var.set(defaults['high'])
+            self.threshold_high_entry.delete(0, tk.END)
+            self.threshold_high_entry.insert(0, f"{defaults['high']:.0f}")
+            self.log(f"Reset high threshold to {defaults['high']:.0f}Hz")
     
     def _validate_rvc_zip(self, zip_path: str) -> Tuple[bool, str]:
         """
@@ -836,9 +1045,17 @@ class VoiceRevolverApp:
             # NOTE: style and tau are ignored by ChatterBox (only used by OpenVoice)
             voice_params = VoiceConversionParams(
                 pitch=pitch,
-                style=self.style_var.get(),     # Ignored by ChatterBox
-                style_strength=1.0,              # Ignored by ChatterBox
-                tau=self.tau_var.get()          # Ignored by ChatterBox
+                style="default",                  # Ignored by ChatterBox
+                style_strength=1.0,               # Ignored by ChatterBox
+                tau=0.3,                          # Ignored by ChatterBox
+                auto_detect_gender=self.use_gender_alignment_var.get(),  # Use gender alignment
+                detected_original_gender=None,    # Will be populated during processing
+                detected_reference_gender=None,   # Will be populated during processing
+                model_gender=self.model_gender_var.get(),  # Manual model gender for RVC
+                original_gender=self.original_gender_var.get(),  # Manual original gender for RVC
+                threshold_low=self.threshold_low_var.get(),  # Pitch shift sensitivity - low
+                threshold_mid=self.threshold_mid_var.get(),  # Pitch shift sensitivity - mid
+                threshold_high=self.threshold_high_var.get()  # Pitch shift sensitivity - high
             )
             
             # Progress callback - receives (percentage, stage) args

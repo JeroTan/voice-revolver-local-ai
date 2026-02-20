@@ -68,6 +68,18 @@ class VoiceConversionParams:
     style: str = "default"  # Voice style: default, american, british, australian, indian
     style_strength: float = 1.0
     tau: float = 0.3  # Voice conversion strength (0.0-1.0): lower=original, higher=reference
+    
+    # Gender-aware pitch adaptation
+    auto_detect_gender: bool = False  # Enable gender alignment (auto-detect for audio, manual for RVC)
+    detected_original_gender: Optional[str] = None  # Detected original voice gender (audio mode only)
+    detected_reference_gender: Optional[str] = None  # Detected reference voice gender (audio mode only)
+    original_gender: Optional[str] = None  # Manual original gender selection for RVC model mode
+    model_gender: Optional[str] = None  # Manual model gender selection for RVC model mode
+    
+    # Adaptive pitch shift thresholds (Hz) - controls shift aggressiveness
+    threshold_low: float = 180.0  # Low threshold - aggressive shift below this F0
+    threshold_mid: float = 230.0  # Mid threshold - moderate shift
+    threshold_high: float = 280.0  # High threshold - conservative shift above this F0
 
 
 @dataclass

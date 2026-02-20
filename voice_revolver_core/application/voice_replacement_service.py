@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Callable
 import asyncio
 import logging
+import numpy as np
 
 from ..domain import (
     ProgressTracker,
@@ -19,6 +20,8 @@ from ..domain import (
 )
 from ..infrastructure.vocal_enhancer import VocalEnhancer
 from ..infrastructure.rvc_wrapper import RVCWrapper
+from ..infrastructure.gender_detector import GenderDetector
+from ..infrastructure.audio_processor import AudioProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,8 @@ class VoiceReplacementService:
         self._progress_tracker = progress_tracker
         self._vocal_enhancer = VocalEnhancer(sample_rate=22050)
         self._rvc_wrapper: Optional[RVCWrapper] = None  # Lazy-loaded for RVC mode
+        self._gender_detector = GenderDetector()  # Gender-aware pitch adaptation
+        self._audio_processor = AudioProcessor()  # Pitch shifting pre-processor
         
         self._active_task_key: Optional[str] = None
         self._progress_callback: Optional[Callable] = None
@@ -152,8 +157,12 @@ class VoiceReplacementService:
                 stem_path = getattr(stems, stem_name, None)
                 if stem_path and stem_path.exists():
                     dest_path = output_dir / standard_name
-                    shutil.copy(stem_path, dest_path)
-                    logger.info(f"Copied {stem_name} to {standard_name} for preview")
+                    # Skip copy if source and destination are the same file
+                    if stem_path.resolve() != dest_path.resolve():
+                        shutil.copy(stem_path, dest_path)
+                        logger.info(f"Copied {stem_name} to {standard_name} for preview")
+                    else:
+                        logger.info(f"Skipped copying {stem_name} (already at {standard_name})")
             
             logger.info("Stem separation complete, enhancing vocals...")
             
@@ -347,11 +356,125 @@ class VoiceReplacementService:
             # Generate output filename
             output_path = output_dir / "converted_vocals.wav"
             
+            # Gender-aware pitch adaptation (only for audio mode, skip for model mode)
+            pitch_shift = params.pitch  # Default to manual pitch setting
+            original_gender = None  # Will be set for RVC manual mode
+            model_gender = None  # Will be set for RVC manual mode
+            
+            if reference_mode == "audio" and params.auto_detect_gender:
+                logger.info("Performing automatic gender detection for pitch adaptation")
+                try:
+                    # Detect gender and calculate pitch shift
+                    calculated_shift, explanation = self._gender_detector.calculate_pitch_shift(
+                        original_audio=vocal_path,
+                        reference_audio=reference_path
+                    )
+                    
+                    # Store detected genders in params for UI display
+                    params.detected_original_gender = self._gender_detector.detect_gender(vocal_path)
+                    params.detected_reference_gender = self._gender_detector.detect_gender(reference_path)
+                    
+                    # Use calculated pitch shift if detection succeeded
+                    if calculated_shift != 0:  # Gender mismatch detected
+                        pitch_shift = calculated_shift
+                        logger.info(f"Gender detection: {explanation}")
+                    else:
+                        logger.info(f"Gender detection: {explanation}")
+                        
+                except Exception as e:
+                    logger.warning(f"Gender detection failed: {e}, using manual pitch setting")
+            
+            elif reference_mode == "model" and params.auto_detect_gender and params.original_gender and params.model_gender:
+                # Model mode with manual gender selection (TRUST USER INPUT - no auto-detection override)
+                logger.info(f"Using manual gender selection: Original={params.original_gender}, Model={params.model_gender}")
+                
+                original_gender = params.original_gender
+                model_gender = params.model_gender
+                
+                # Use FIXED shifts based on user's manual selection
+                # Do NOT override with F0 detection - if user says it's male, treat it as male!
+                if original_gender == model_gender:
+                    pitch_shift = 0
+                    explanation = f"Same gender ({original_gender}): no pitch shift"
+                elif original_gender == "male" and model_gender == "female":
+                    pitch_shift = 12
+                    explanation = f"Male -> Female model: +{pitch_shift} semitones (manual selection)"
+                elif original_gender == "female" and model_gender == "male":
+                    pitch_shift = -12
+                    explanation = f"Female -> Male model: {pitch_shift} semitones (manual selection)"
+                else:
+                    pitch_shift = 0
+                    explanation = "No pitch shift"
+                
+                logger.info(f"Manual gender alignment: {explanation}")
+            
+            logger.info(f"Final pitch shift: {pitch_shift:+d} semitones")
+            
+            # Pre-process vocal with Parselmouth adaptive pitch shifting if needed
+            vocal_to_convert = vocal_path  # Default to original vocal
+            
+            if pitch_shift != 0 and reference_mode == "model":
+                logger.info(f"Pre-shifting vocal using ADAPTIVE pitch shift (gender-aware)")
+                logger.info(f"Thresholds: Low={params.threshold_low:.0f}Hz, Mid={params.threshold_mid:.0f}Hz, High={params.threshold_high:.0f}Hz")
+                
+                # Create temp file for pitch-shifted vocal
+                shifted_vocal_path = output_dir / f"vocal_adaptive_pitch_shifted.wav"
+                
+                # Apply ADAPTIVE gender-aware pitch shifting with user-defined thresholds
+                # This analyzes pitch moment-by-moment and shifts only what's needed
+                # Lower thresholds = more aggressive shifting (better for subtle voices)
+                shift_success = self._audio_processor.pitch_shift_adaptive(
+                    audio_path=vocal_path,
+                    output_path=shifted_vocal_path,
+                    source_gender=original_gender,
+                    target_gender=model_gender,
+                    target_male_f0=130.0,
+                    target_female_f0=210.0,
+                    max_shift_semitones=12.0,
+                    smoothing_window=5,
+                    threshold_low=params.threshold_low,
+                    threshold_mid=params.threshold_mid,
+                    threshold_high=params.threshold_high
+                )
+                
+                if shift_success:
+                    logger.info(f"Adaptive pitch shift successful, using shifted vocal for RVC")
+                    vocal_to_convert = shifted_vocal_path
+                    # Set pitch shift to 0 for RVC since we've already done it
+                    rvc_pitch_shift = 0
+                else:
+                    logger.warning(f"Adaptive pitch shifting failed, RVC will handle pitch shift instead")
+                    vocal_to_convert = vocal_path
+                    rvc_pitch_shift = pitch_shift
+            elif pitch_shift != 0 and reference_mode == "audio":
+                # For audio mode, still use fixed shift (adaptive only for RVC mode)
+                logger.info(f"Pre-shifting vocal pitch by {pitch_shift:+d} semitones (fixed shift for audio mode)")
+                
+                shifted_vocal_path = output_dir / f"vocal_pitch_shifted_{abs(pitch_shift)}st.wav"
+                
+                shift_success = self._audio_processor.pitch_shift_gender(
+                    audio_path=vocal_path,
+                    output_path=shifted_vocal_path,
+                    semitones=float(pitch_shift)
+                )
+                
+                if shift_success:
+                    logger.info(f"Vocal pitch shifted successfully, using shifted vocal")
+                    vocal_to_convert = shifted_vocal_path
+                    rvc_pitch_shift = 0
+                else:
+                    logger.warning(f"Pitch shifting failed")
+                    vocal_to_convert = vocal_path
+                    rvc_pitch_shift = pitch_shift
+            else:
+                logger.info("No pitch shift needed, using original vocal")
+                rvc_pitch_shift = 0
+            
             if reference_mode == "audio":
                 # Audio mode - Use ChatterBox wrapper (simple API)
                 logger.info("Using ChatterBox VC for audio reference conversion")
                 result_path, error = self._voice_converter.convert_voice(
-                    source_audio_path=vocal_path,
+                    source_audio_path=vocal_to_convert,  # Use pitch-shifted vocal if available
                     target_voice_path=reference_path,
                     output_path=output_path,
                     progress_callback=None
@@ -383,10 +506,10 @@ class VoiceReplacementService:
                 # Convert voice using RVC
                 logger.info("Converting voice with RVC")
                 result_path, error = self._rvc_wrapper.convert_voice(
-                    source_audio_path=vocal_path,
+                    source_audio_path=vocal_to_convert,  # Use pitch-shifted vocal if available
                     output_path=output_path,
                     f0_method="rmvpe",  # Best quality pitch detection
-                    f0_up_key=0,  # No pitch shift by default
+                    f0_up_key=rvc_pitch_shift,  # 0 if already shifted, otherwise apply shift
                     index_rate=0.75,  # Retrieval index influence
                     filter_radius=3,  # Pitch smoothing
                     resample_sr=0,  # Keep original sample rate
