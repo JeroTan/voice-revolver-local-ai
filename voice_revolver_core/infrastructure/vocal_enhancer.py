@@ -151,3 +151,62 @@ class VocalEnhancer:
             shutil.copy(input_path, output_path)
             logger.warning("Using original audio due to enhancement error")
             return output_path, None  # Don't fail the whole pipeline
+    
+    def denoise_only(
+        self, 
+        input_path: Path, 
+        output_path: Path,
+        noise_reduction: float = 0.5
+    ) -> Tuple[Optional[Path], Optional[str]]:
+        """
+        Apply ONLY noise reduction - no compression, no EQ.
+        Perfect for reference voices to preserve character while cleaning background noise.
+        
+        Args:
+            input_path: Path to input audio file
+            output_path: Path to save denoised audio
+            noise_reduction: Noise reduction strength (0-1), default 0.5 for subtle cleaning
+            
+        Returns:
+            (output_path, error_message)
+        """
+        if not self._load_dependencies():
+            # Fallback: just copy the file if dependencies not available
+            import shutil
+            shutil.copy(input_path, output_path)
+            logger.warning("Denoising skipped (dependencies missing), using original audio")
+            return output_path, None
+        
+        try:
+            logger.info(f"Denoising audio (subtle): {input_path}")
+            
+            # 1. Load audio
+            audio, sr = librosa.load(str(input_path), sr=self._sample_rate, mono=True)
+            
+            # 2. Noise reduction ONLY (no compression, no EQ)
+            logger.info("Applying gentle noise reduction...")
+            cleaned = self._nr.reduce_noise(
+                y=audio, 
+                sr=sr, 
+                stationary=True,
+                prop_decrease=noise_reduction  # Default 0.5 = subtle cleaning
+            )
+            
+            # 3. Save denoised audio (preserve original characteristics)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(str(output_path), cleaned, sr, subtype='PCM_16')
+            
+            logger.info(f"Noise reduction complete: {output_path}")
+            return output_path, None
+            
+        except Exception as e:
+            error_msg = f"Denoising failed: {str(e)}"
+            logger.error(error_msg)
+            import traceback
+            traceback.print_exc()
+            
+            # Fallback: copy original
+            import shutil
+            shutil.copy(input_path, output_path)
+            logger.warning("Using original audio due to denoising error")
+            return output_path, None

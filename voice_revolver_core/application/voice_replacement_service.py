@@ -170,6 +170,23 @@ class VoiceReplacementService:
             vocals_to_convert = enhanced_vocals_result if enhanced_vocals_result else stems.vocals
             logger.info(f"Using vocals for conversion: {vocals_to_convert}")
             
+            # Stage 2.6: Denoise reference voice (preserve character, just remove noise)
+            self._update_progress(
+                ProcessingStage.VOICE_CONVERSION,
+                33,
+                "Cleaning reference voice..."
+            )
+            denoised_reference_path = output_dir / "reference_denoised.wav"
+            denoised_reference, denoise_err = self._vocal_enhancer.denoise_only(
+                reference_voice_path,
+                denoised_reference_path,
+                noise_reduction=0.5  # Subtle cleaning to preserve voice character
+            )
+            
+            # Use denoised reference for conversion (fallback to original if denoising fails)
+            reference_to_use = denoised_reference if denoised_reference else reference_voice_path
+            logger.info(f"Using reference voice: {reference_to_use}")
+            
             # Stage 3: Voice conversion (30-70%)
             self._update_progress(
                 ProcessingStage.VOICE_CONVERSION,
@@ -178,7 +195,7 @@ class VoiceReplacementService:
             )
             converted_vocals, err = self._convert_voice(
                 vocals_to_convert, 
-                reference_voice_path,
+                reference_to_use,
                 output_dir,
                 voice_params
             )

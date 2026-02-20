@@ -271,7 +271,7 @@ class VoiceRevolverApp:
     def __init__(self, root, device, app_data_path):
         self.root = root
         self.root.title("Voice Revolver AI - Local Voice Replacement")
-        self.root.geometry("900x850")  # Larger window for 5 preview players + volume control + tau control
+        self.root.geometry("900x920")  # Larger window for 6 preview players + volume control
         
         # Configuration
         self.device = device
@@ -287,17 +287,19 @@ class VoiceRevolverApp:
         self.style_var = tk.StringVar(value="default")
         self.tau_var = tk.DoubleVar(value=0.3)
         
-        # Processed file paths for 5 previews
+        # Processed file paths for 6 previews
         self.original_audio_path = None
         self.original_vocals_path = None  # NEW: Original vocals before conversion
+        self.reference_denoised_path = None  # NEW: Denoised reference voice
         self.vocals_converted_path = None
         self.final_mix_path = None
         self.instrumental_path = None
         
-        # Audio preview states (5 separate players)
+        # Audio preview states (6 separate players)
         self.preview_states = {
             'original': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
             'original_vocals': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
+            'reference_denoised': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
             'vocals': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
             'final': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
             'instrumental': {'loaded': False, 'playing': False, 'length': 0, 'timer': None}
@@ -456,7 +458,7 @@ class VoiceRevolverApp:
         # =================================================================
         
         # Use vocal only checkbox
-        self.vocal_only_var = tk.BooleanVar(value=False)
+        self.vocal_only_var = tk.BooleanVar(value=True)
         vocal_only_check = ttk.Checkbutton(settings_frame, text="Use Vocal Only", 
                                            variable=self.vocal_only_var)
         vocal_only_check.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=5)
@@ -498,9 +500,10 @@ class VoiceRevolverApp:
         preview_configs = [
             ('original', 'Original Audio', 0),
             ('original_vocals', 'Original Vocal Only', 1),
-            ('vocals', 'Vocal That Reference Only', 2),
-            ('final', 'Final Remix', 3),
-            ('instrumental', 'Instrumental', 4)
+            ('reference_denoised', 'Reference Voice (Cleaned)', 2),
+            ('vocals', 'Vocal That Reference Only', 3),
+            ('final', 'Final Remix', 4),
+            ('instrumental', 'Instrumental', 5)
         ]
         
         for track_id, track_name, row in preview_configs:
@@ -569,7 +572,6 @@ class VoiceRevolverApp:
         
         # Configure grid weights
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(4, weight=1)
     
     def _create_log_window(self):
         """Create separate log window"""
@@ -679,6 +681,9 @@ class VoiceRevolverApp:
             messagebox.showwarning("Missing Files", "Please select both audio files")
             return
         
+        # CRITICAL: Unload all audio files before processing to avoid file locks
+        self._unload_all_previews()
+        
         self.processing = True
         self.start_btn.config(state="disabled")
         self.cancel_btn.config(state="normal")
@@ -787,7 +792,7 @@ class VoiceRevolverApp:
         self.cancel_btn.config(state="disabled")
         self.export_btn.config(state="normal")
         
-        # Load all 4 audio files for preview
+        # Load all 6 audio files for preview
         self._load_all_previews()
         
         messagebox.showinfo("Success", "Voice replacement complete!\\nUse the Preview section to play each track.")
@@ -844,10 +849,56 @@ class VoiceRevolverApp:
                 self.log(f"✗ Export failed: {e}")
                 messagebox.showerror("Export Failed", f"Error:\n{e}")
     
-    # ========== Audio Preview Methods (4-Track System) ==========
+    # ========== Audio Preview Methods (6-Track System) ==========
+    
+    def _unload_all_previews(self):
+        """Unload all audio files to release file locks before new processing"""
+        if not PYGAME_AVAILABLE:
+            return
+        
+        try:
+            # Stop any playing audio
+            if self.current_track:
+                mixer.music.stop()
+                self.current_track = None
+            
+            # Unload the mixer music
+            mixer.music.unload()
+            
+            # Reset all preview states
+            for track_id in self.preview_states:
+                state = self.preview_states[track_id]
+                state['loaded'] = False
+                state['playing'] = False
+                state['length'] = 0
+                if state['timer']:
+                    self.root.after_cancel(state['timer'])
+                    state['timer'] = None
+                
+                # Disable controls
+                if track_id in self.preview_controls:
+                    controls = self.preview_controls[track_id]
+                    controls['play_btn'].config(state="disabled", text="▶")
+                    controls['stop_btn'].config(state="disabled")
+                    controls['timeline'].config(state="disabled")
+                    controls['export_btn'].config(state="disabled")
+                    controls['timeline_var'].set(0)
+                    controls['time_label'].config(text="00:00/00:00")
+            
+            # Clear file paths
+            self.original_audio_path = None
+            self.original_vocals_path = None
+            self.reference_denoised_path = None
+            self.vocals_converted_path = None
+            self.final_mix_path = None
+            self.instrumental_path = None
+            
+            self.log("Unloaded all preview files")
+        except Exception as e:
+            self.log(f"Warning: Error unloading previews: {e}")
     
     def _load_all_previews(self):
-        """Load all 5 audio files for preview after processing"""
+        """Load all 6 audio files for preview after processing"""
         if not PYGAME_AVAILABLE:
             self.log("Audio preview not available (pygame not installed)")
             return
@@ -863,12 +914,21 @@ class VoiceRevolverApp:
         if original_vocals_path.exists():
             self.original_vocals_path = str(original_vocals_path)
         
-        # 3. Converted vocals only
+        # 3. Reference voice (denoised)
+        reference_denoised_path = temp_dir / "reference_denoised.wav"
+        self.log(f"Looking for reference_denoised at: {reference_denoised_path}")
+        if reference_denoised_path.exists():
+            self.reference_denoised_path = str(reference_denoised_path)
+            self.log(f"✓ Found reference_denoised.wav")
+        else:
+            self.log(f"✗ reference_denoised.wav not found")
+        
+        # 4. Converted vocals only
         vocals_path = temp_dir / "converted_vocals.wav"
         if vocals_path.exists():
             self.vocals_converted_path = str(vocals_path)
         
-        # 4. Final mix (ALWAYS load the full remix, regardless of vocal_only setting)
+        # 5. Final mix (ALWAYS load the full remix, regardless of vocal_only setting)
         final_mix_path = temp_dir / "mixed_output.wav"
         if final_mix_path.exists():
             self.final_mix_path = str(final_mix_path)
@@ -876,19 +936,21 @@ class VoiceRevolverApp:
             # Fallback to output file if mixed_output doesn't exist
             self.final_mix_path = self.output_file
         
-        # 5. Instrumental (need to mix stems excluding vocals)
+        # 6. Instrumental (need to mix stems excluding vocals)
         self._create_instrumental_track(temp_dir)
         
         # Load each track
         tracks = [
             ('original', self.original_audio_path, "Original Audio"),
             ('original_vocals', self.original_vocals_path, "Original Vocals"),
+            ('reference_denoised', self.reference_denoised_path, "Reference Voice (Cleaned)"),
             ('vocals', self.vocals_converted_path, "Converted Vocals"),
             ('final', self.final_mix_path, "Final Mix"),
             ('instrumental', self.instrumental_path, "Instrumental")
         ]
         
         for track_id, file_path, name in tracks:
+            self.log(f"Checking {name}: path={file_path}, exists={os.path.exists(file_path) if file_path else False}")
             if file_path and os.path.exists(file_path):
                 self._load_single_preview(track_id, file_path, name)
             else:
@@ -1107,6 +1169,7 @@ class VoiceRevolverApp:
         paths = {
             'original': self.original_audio_path,
             'original_vocals': self.original_vocals_path,
+            'reference_denoised': self.reference_denoised_path,
             'vocals': self.vocals_converted_path,
             'final': self.final_mix_path,
             'instrumental': self.instrumental_path
@@ -1124,6 +1187,7 @@ class VoiceRevolverApp:
         track_names = {
             'original': 'original',
             'original_vocals': 'original_vocals',
+            'reference_denoised': 'reference_denoised',
             'vocals': 'vocals_converted',
             'final': 'final_mix',
             'instrumental': 'instrumental'
