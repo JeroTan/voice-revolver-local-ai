@@ -24,7 +24,7 @@ wheels/
 venv/
 env/
 ENV/
-.venv
+.venv*
 
 # IDE
 .vscode/
@@ -57,3 +57,6 @@ tmp/
 # Environment
 .env
 .env.local
+
+applio_temp/
+venv-rvc/

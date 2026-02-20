@@ -15,10 +15,22 @@ torchaudio==2.1.2
 demucs
 
 # Voice conversion
-# ChatterBox - Primary voice conversion engine (better quality than OpenVoice)
+# ChatterBox - Primary voice conversion engine for audio references (better quality than OpenVoice)
 chatterbox-tts
 
-# OpenVoice - Alternative voice conversion (kept for reference)
+# RVC (Retrieval-based Voice Conversion) - EXPERIMENTAL
+# Installation: pip install rvc-python faiss-cpu praat-parselmouth pyworld
+# Known Issue: Python 3.11 + fairseq/hydra have dataclass bugs (mutable defaults)
+# Workaround: Downgrade numpy to 1.23.5 and scipy to 1.10.1, then install RVC
+# Note: This breaks some other packages (scikit-learn, ChatterBox may have warnings)
+# Status: Feature implemented but requires manual dependency resolution
+# TODO: Wait for fairseq/hydra Python 3.11 compatibility fixes
+rvc-python
+faiss-cpu
+praat-parselmouth
+pyworld
+
+# OpenVoice - Alternative voice conversion (legacy, kept for reference)
 git+https://github.com/myshell-ai/OpenVoice.git
 git+https://github.com/myshell-ai/MeloTTS.git
 whisper-timestamped

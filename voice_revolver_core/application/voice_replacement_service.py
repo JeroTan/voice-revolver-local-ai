@@ -18,6 +18,7 @@ from ..domain import (
     generate_task_key,
 )
 from ..infrastructure.vocal_enhancer import VocalEnhancer
+from ..infrastructure.rvc_wrapper import RVCWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class VoiceReplacementService:
         self._file_manager = file_manager
         self._progress_tracker = progress_tracker
         self._vocal_enhancer = VocalEnhancer(sample_rate=22050)
+        self._rvc_wrapper: Optional[RVCWrapper] = None  # Lazy-loaded for RVC mode
         
         self._active_task_key: Optional[str] = None
         self._progress_callback: Optional[Callable] = None
@@ -56,6 +58,7 @@ class VoiceReplacementService:
         output_format: str = "mp3",
         output_dir: Optional[Path] = None,
         vocal_only: bool = False,
+        reference_mode: str = "audio",
         progress_callback: Optional[Callable[[ProgressInfo], None]] = None,
     ) -> tuple[Optional[Path], Optional[ErrorCode], str]:
         """
@@ -63,17 +66,18 @@ class VoiceReplacementService:
         
         Args:
             original_audio_path: Path to original song
-            reference_voice_path: Path to reference voice audio
+            reference_voice_path: Path to reference voice audio or RVC model zip
             voice_params: Voice conversion parameters
             output_format: Output format (mp3, wav, flac)
             output_dir: Output directory (defaults to temp)
             vocal_only: If True, output only converted vocals without mixing
+            reference_mode: 'audio' for audio file, 'model' for RVC zip
             progress_callback: Progress callback
             
         Returns:
             (output_path, error_code, error_message)
         """
-        logger.info(f"process() called with original={original_audio_path}, reference={reference_voice_path}")
+        logger.info(f"process() called with original={original_audio_path}, reference={reference_voice_path}, mode={reference_mode}")
         
         if output_dir is None:
             output_dir = self._file_manager.temp_dir
@@ -170,34 +174,40 @@ class VoiceReplacementService:
             vocals_to_convert = enhanced_vocals_result if enhanced_vocals_result else stems.vocals
             logger.info(f"Using vocals for conversion: {vocals_to_convert}")
             
-            # Stage 2.6: Denoise reference voice (preserve character, just remove noise)
-            self._update_progress(
-                ProcessingStage.VOICE_CONVERSION,
-                33,
-                "Cleaning reference voice..."
-            )
-            denoised_reference_path = output_dir / "reference_denoised.wav"
-            denoised_reference, denoise_err = self._vocal_enhancer.denoise_only(
-                reference_voice_path,
-                denoised_reference_path,
-                noise_reduction=0.5  # Subtle cleaning to preserve voice character
-            )
-            
-            # Use denoised reference for conversion (fallback to original if denoising fails)
-            reference_to_use = denoised_reference if denoised_reference else reference_voice_path
-            logger.info(f"Using reference voice: {reference_to_use}")
+            # Stage 2.6: Denoise reference voice (ONLY if using audio mode, skip for RVC model)
+            if reference_mode == "audio":
+                self._update_progress(
+                    ProcessingStage.VOICE_CONVERSION,
+                    33,
+                    "Cleaning reference voice..."
+                )
+                denoised_reference_path = output_dir / "reference_denoised.wav"
+                denoised_reference, denoise_err = self._vocal_enhancer.denoise_only(
+                    reference_voice_path,
+                    denoised_reference_path,
+                    noise_reduction=0.5  # Subtle cleaning to preserve voice character
+                )
+                
+                # Use denoised reference for conversion (fallback to original if denoising fails)
+                reference_to_use = denoised_reference if denoised_reference else reference_voice_path
+                logger.info(f"Using denoised reference audio: {reference_to_use}")
+            else:
+                # Model mode - use zip path directly (will be handled by RVC wrapper)
+                reference_to_use = reference_voice_path
+                logger.info(f"Using RVC model: {reference_to_use}")
             
             # Stage 3: Voice conversion (30-70%)
             self._update_progress(
                 ProcessingStage.VOICE_CONVERSION,
                 35,
-                "Converting voice..."
+                "Converting voice..." + (" (RVC)" if reference_mode == "model" else " (ChatterBox)")
             )
             converted_vocals, err = self._convert_voice(
                 vocals_to_convert, 
                 reference_to_use,
                 output_dir,
-                voice_params
+                voice_params,
+                reference_mode
             )
             if err:
                 return None, err, "Voice conversion failed"
@@ -329,22 +339,70 @@ class VoiceReplacementService:
         vocal_path: Path, 
         reference_path: Path,
         output_dir: Path,
-        params: VoiceConversionParams
+        params: VoiceConversionParams,
+        reference_mode: str = "audio"
     ) -> tuple[Optional[Path], Optional[ErrorCode]]:
-        """Convert voice using ChatterBox VC (or OpenVoice if using legacy)"""
+        """Convert voice using ChatterBox VC (audio mode) or RVC (model mode)"""
         try:
             # Generate output filename
             output_path = output_dir / "converted_vocals.wav"
             
-            # Use ChatterBox wrapper (simple API - no style/tau parameters)
-            result_path, error = self._voice_converter.convert_voice(
-                source_audio_path=vocal_path,
-                target_voice_path=reference_path,
-                output_path=output_path,
-                progress_callback=None
-            )
+            if reference_mode == "audio":
+                # Audio mode - Use ChatterBox wrapper (simple API)
+                logger.info("Using ChatterBox VC for audio reference conversion")
+                result_path, error = self._voice_converter.convert_voice(
+                    source_audio_path=vocal_path,
+                    target_voice_path=reference_path,
+                    output_path=output_path,
+                    progress_callback=None
+                )
+                
+            elif reference_mode == "model":
+                # Model mode - Use RVC wrapper with pre-trained model
+                logger.info(f"Using RVC for model reference conversion: {reference_path}")
+                
+                # Lazy-load RVC wrapper (use CUDA if available)
+                if self._rvc_wrapper is None:
+                    logger.info("Initializing RVC wrapper")
+                    try:
+                        import torch
+                        device = "cuda" if torch.cuda.is_available() else "cpu"
+                        logger.info(f"RVC device: {device}")
+                    except ImportError:
+                        device = "cpu"
+                        logger.warning("PyTorch not found, using CPU for RVC")
+                    self._rvc_wrapper = RVCWrapper(device=device)
+                
+                # Load model from zip
+                logger.info("Loading RVC model from zip")
+                load_success, load_error = self._rvc_wrapper.load_model_from_zip(reference_path)
+                if load_error:
+                    logger.error(f"RVC model load error: {load_error}")
+                    return None, ErrorCode.VOICE_CONVERT_FAILED
+                
+                # Convert voice using RVC
+                logger.info("Converting voice with RVC")
+                result_path, error = self._rvc_wrapper.convert_voice(
+                    source_audio_path=vocal_path,
+                    output_path=output_path,
+                    f0_method="rmvpe",  # Best quality pitch detection
+                    f0_up_key=0,  # No pitch shift by default
+                    index_rate=0.75,  # Retrieval index influence
+                    filter_radius=3,  # Pitch smoothing
+                    resample_sr=0,  # Keep original sample rate
+                    rms_mix_rate=0.25,  # Envelope mixing
+                    protect=0.33  # Consonant protection
+                )
+                
+                # Unload model after conversion to free resources
+                logger.info("Unloading RVC model")
+                self._rvc_wrapper.unload_model()
+                
+            else:
+                logger.error(f"Invalid reference_mode: {reference_mode}")
+                return None, ErrorCode.VOICE_CONVERT_FAILED
             
-            # NOTE: If using OpenVoice wrapper instead, use:
+            # NOTE: If using OpenVoice wrapper instead of ChatterBox, use:
             # result_path, error = self._voice_converter.convert_voice_simple(
             #     source_audio_path=vocal_path,
             #     reference_audio_path=reference_path,
@@ -362,6 +420,8 @@ class VoiceReplacementService:
             
         except Exception as e:
             logger.error(f"Voice conversion error: {e}")
+            import traceback
+            traceback.print_exc()
             return None, ErrorCode.VOICE_CONVERT_FAILED
     
     def _mix_audio(

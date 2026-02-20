@@ -15,6 +15,7 @@ import sys
 import os
 from pathlib import Path
 from datetime import datetime
+from typing import Tuple
 import traceback
 import logging
 try:
@@ -283,6 +284,9 @@ class VoiceRevolverApp:
         self.output_file = None
         self.processing = False
         
+        # Reference mode: 'audio' or 'model' (RVC zip)
+        self.reference_mode = tk.StringVar(value="audio")
+        
         # OpenVoice-specific params (kept for compatibility, not used with ChatterBox)
         self.style_var = tk.StringVar(value="default")
         self.tau_var = tk.DoubleVar(value=0.3)
@@ -373,11 +377,21 @@ class VoiceRevolverApp:
         self.original_label.grid(row=0, column=1, sticky=tk.W, padx=5)
         ttk.Button(file_frame, text="Browse...", command=self._select_original).grid(row=0, column=2, padx=5)
         
-        # Reference file
+        # Reference file with mode toggle
         ttk.Label(file_frame, text="Reference Voice:").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.reference_label = ttk.Label(file_frame, text="No file selected", foreground="gray")
         self.reference_label.grid(row=1, column=1, sticky=tk.W, padx=5)
         ttk.Button(file_frame, text="Browse...", command=self._select_reference).grid(row=1, column=2, padx=5)
+        
+        # Reference mode selector (Audio or Model)
+        mode_frame = ttk.Frame(file_frame)
+        mode_frame.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        
+        ttk.Label(mode_frame, text="Reference Type:", foreground="gray", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(mode_frame, text="Audio File (ChatterBox)", variable=self.reference_mode, 
+                       value="audio", command=self._on_reference_mode_change).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="RVC Model (.zip)", variable=self.reference_mode, 
+                       value="model", command=self._on_reference_mode_change).pack(side=tk.LEFT, padx=5)
         
         file_frame.columnconfigure(1, weight=1)
         
@@ -649,20 +663,96 @@ class VoiceRevolverApp:
             self._check_ready()
     
     def _select_reference(self):
-        """Select reference voice file"""
-        file_path = filedialog.askopenfilename(
-            title="Select Reference Voice",
-            filetypes=[
+        """Select reference voice file or RVC model zip"""
+        # Determine file type based on selected mode
+        if self.reference_mode.get() == "audio":
+            title = "Select Reference Voice (Audio)"
+            filetypes = [
                 ("Audio Files", "*.mp3 *.wav *.flac *.ogg *.m4a"),
                 ("All Files", "*.*")
             ]
-        )
+        else:  # model
+            title = "Select RVC Model (Zip)"
+            filetypes = [
+                ("RVC Model", "*.zip"),
+                ("All Files", "*.*")
+            ]
+        
+        file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+        
         if file_path:
+            # Validate zip file if model mode
+            if self.reference_mode.get() == "model":
+                is_valid, error_msg = self._validate_rvc_zip(file_path)
+                if not is_valid:
+                    messagebox.showerror("Invalid Model", error_msg)
+                    return
+            
             self.reference_file = file_path
             filename = Path(file_path).name
             self.reference_label.config(text=filename, foreground="black")
-            self.log(f"Reference file: {filename}")
+            mode_text = "Model" if self.reference_mode.get() == "model" else "Audio"
+            self.log(f"Reference {mode_text}: {filename}")
             self._check_ready()
+    
+    def _on_reference_mode_change(self):
+        """Handle reference mode toggle between audio and model"""
+        mode = self.reference_mode.get()
+        
+        # Clear current selection when switching modes
+        self.reference_file = None
+        self.reference_label.config(text="No file selected", foreground="gray")
+        self.log(f"Reference mode changed to: {mode.upper()}")
+        
+        # Show info for model mode (advanced feature)
+        if mode == "model":
+            result = messagebox.askokcancel(
+                "RVC Model Mode",
+                "📦 RVC Model Mode - Advanced Voice Conversion\n\n"
+                "Requirements:\n"
+                "• Pre-trained RVC model (.zip with .pth + .index files)\n"
+                "• numpy 1.23.5, scipy 1.10.1 (see requirements.txt)\n"
+                "• rvc-python, faiss-cpu, praat-parselmouth, pyworld\n\n"
+                "Note: Uses subprocess approach to handle library compatibility.\n\n"
+                "Do you want to continue with Model mode?",
+                icon='info'
+            )
+            if not result:
+                # User cancelled, switch back to audio mode
+                self.reference_mode.set("audio")
+                return
+            
+        self._check_ready()
+    
+    def _validate_rvc_zip(self, zip_path: str) -> Tuple[bool, str]:
+        """
+        Validate RVC model zip file contains required .pth and .index files
+        
+        Returns:
+            (is_valid, error_message)
+        """
+        try:
+            import zipfile
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                file_list = zip_ref.namelist()
+                
+                # Check for .pth file
+                pth_files = [f for f in file_list if f.endswith('.pth')]
+                if not pth_files:
+                    return False, "Invalid RVC model: No .pth file found in zip"
+                
+                # Check for .index file
+                index_files = [f for f in file_list if f.endswith('.index')]
+                if not index_files:
+                    return False, "Invalid RVC model: No .index file found in zip"
+                
+                self.log(f"✓ Valid RVC model: {pth_files[0]} + {index_files[0]}")
+                return True, ""
+                
+        except zipfile.BadZipFile:
+            return False, "Invalid zip file format"
+        except Exception as e:
+            return False, f"Error validating zip: {str(e)}"
     
     def _check_ready(self):
         """Check if ready to start processing"""
@@ -764,6 +854,7 @@ class VoiceRevolverApp:
                 voice_params=voice_params,
                 output_format=output_format,
                 vocal_only=self.vocal_only_var.get(),
+                reference_mode=self.reference_mode.get(),  # Pass dual-reference mode
                 progress_callback=progress_callback
             )
             
@@ -898,7 +989,7 @@ class VoiceRevolverApp:
             self.log(f"Warning: Error unloading previews: {e}")
     
     def _load_all_previews(self):
-        """Load all 6 audio files for preview after processing"""
+        """Load all audio files for preview after processing (5-6 tracks depending on mode)"""
         if not PYGAME_AVAILABLE:
             self.log("Audio preview not available (pygame not installed)")
             return
@@ -914,14 +1005,19 @@ class VoiceRevolverApp:
         if original_vocals_path.exists():
             self.original_vocals_path = str(original_vocals_path)
         
-        # 3. Reference voice (denoised)
+        # 3. Reference voice (denoised) - ONLY for audio mode (skip for RVC model)
         reference_denoised_path = temp_dir / "reference_denoised.wav"
-        self.log(f"Looking for reference_denoised at: {reference_denoised_path}")
-        if reference_denoised_path.exists():
-            self.reference_denoised_path = str(reference_denoised_path)
-            self.log(f"✓ Found reference_denoised.wav")
+        if self.reference_mode.get() == "audio":
+            self.log(f"Looking for reference_denoised at: {reference_denoised_path}")
+            if reference_denoised_path.exists():
+                self.reference_denoised_path = str(reference_denoised_path)
+                self.log(f"✓ Found reference_denoised.wav")
+            else:
+                self.log(f"✗ reference_denoised.wav not found")
         else:
-            self.log(f"✗ reference_denoised.wav not found")
+            # Model mode - skip reference denoising
+            self.log("Model mode: Skipping reference_denoised preview (not applicable for RVC)")
+            self.reference_denoised_path = None
         
         # 4. Converted vocals only
         vocals_path = temp_dir / "converted_vocals.wav"
@@ -939,15 +1035,22 @@ class VoiceRevolverApp:
         # 6. Instrumental (need to mix stems excluding vocals)
         self._create_instrumental_track(temp_dir)
         
-        # Load each track
+        # Build track list (conditionally include reference_denoised)
         tracks = [
             ('original', self.original_audio_path, "Original Audio"),
             ('original_vocals', self.original_vocals_path, "Original Vocals"),
-            ('reference_denoised', self.reference_denoised_path, "Reference Voice (Cleaned)"),
+        ]
+        
+        # Add reference_denoised only in audio mode
+        if self.reference_mode.get() == "audio":
+            tracks.append(('reference_denoised', self.reference_denoised_path, "Reference Voice (Cleaned)"))
+        
+        # Continue with remaining tracks
+        tracks.extend([
             ('vocals', self.vocals_converted_path, "Converted Vocals"),
             ('final', self.final_mix_path, "Final Mix"),
             ('instrumental', self.instrumental_path, "Instrumental")
-        ]
+        ])
         
         for track_id, file_path, name in tracks:
             self.log(f"Checking {name}: path={file_path}, exists={os.path.exists(file_path) if file_path else False}")

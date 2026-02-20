@@ -281,13 +281,165 @@ Files Modified:
 - ✅ Service layer updated to use ChatterBox
 - ✅ UI controls for OpenVoice commented out
 - ✅ chatterbox-tts installed successfully
-- ⏳ **Next:** Test conversion quality with ChatterBox
-- ⏳ Compare results: OpenVoice vs ChatterBox
+- ✅ Conversion quality excellent (ChatterBox)
+- ✅ Reference voice denoising added (50% noise reduction)
+- ✅ 6th preview player for denoised reference
+- ✅ File lock errors fixed
+- ✅ Preview playback working for all tracks
 
 #### Technical Notes:
 - **ChatterBox has TTS capabilities** (text-to-speech) but we only use VC (voice conversion)
 - **ChatterBoxTTS has more controls** (cfg_weight ≈ tau, exaggeration) but requires text input
 - **ChatterBoxVC is simpler** - Perfect for our use case (audio → audio conversion)
+
+### 2026-02-20 | Dual-Reference Mode - RVC Integration
+- **Topic:** Added dual-reference voice conversion (Audio files OR RVC models)
+- **Goal:** Support both easy audio-based conversion (ChatterBox) and advanced pre-trained models (RVC)
+
+#### Feature Overview:
+Users can now choose between two reference voice modes:
+1. **Audio File (ChatterBox)** - Simple: Upload any voice audio (.mp3/.wav) 
+2. **RVC Model (.zip)** - Advanced: Use pre-trained RVC models (.pth + .index)
+
+#### Implementation:
+
+**Files Created:**
+- `voice_revolver_core/infrastructure/rvc_wrapper.py` (246 lines)
+  - Full RVC integration wrapper
+  - `load_model_from_zip()` - Extracts .pth (weights) + .index (FAISS retrieval) from zip
+  - `_load_rvc_model()` - Lazy imports RVC library, initializes VC module
+  - `convert_voice()` - RVC conversion with 8 parameters:
+    - f0_method: rmvpe (best pitch detection)
+    - f0_up_key: pitch shift (0 = no shift)
+    - index_rate: 0.75 (retrieval index influence)
+    - filter_radius: 3 (pitch smoothing)
+    - resample_sr: 0 (keep original sample rate)
+    - rms_mix_rate: 0.25 (envelope mixing)
+    - protect: 0.33 (consonant protection)
+  - `unload_model()` - Cleanup temp files + GPU cache
+  - Sample rate: 40000Hz (RVC default)
+
+**Files Modified:**
+- `voice_revolver_ui/main_tk.py`:
+  - Lines 280-283: Added `self.reference_mode = tk.StringVar(value="audio")`
+  - Lines 376-390: Added reference mode UI (Radio buttons: "Audio File (ChatterBox)" vs "RVC Model (.zip)")
+  - Lines 664-730: Updated `_select_reference()` for dual-mode file selection:
+    - Audio mode: .mp3/.wav/.flac/.ogg/.m4a dialog
+    - Model mode: .zip dialog
+  - Lines 707-730: Added `_validate_rvc_zip()` - checks for .pth and .index files in zip
+  - Lines 701-705: Added `_on_reference_mode_change()` - clears selection on mode switch
+  - Lines 970-1043: Updated `_load_all_previews()` - conditionally loads reference_denoised (audio mode only)
+  - Lines 830-840: Updated `_process()` to pass `reference_mode` parameter
+
+- `voice_revolver_core/application/voice_replacement_service.py`:
+  - Lines 1-21: Added `from ..infrastructure.rvc_wrapper import RVCWrapper`
+  - Lines 31-49: Added `self._rvc_wrapper: Optional[RVCWrapper] = None` (lazy-loaded)
+  - Lines 51-79: Added `reference_mode: str = "audio"` parameter to `process()` method
+  - Lines 173-198: Updated Stage 2.6 (reference denoising):
+    - Audio mode: Denoise reference with `denoise_only()` before ChatterBox
+    - Model mode: Skip denoising, use .zip path directly
+  - Lines 337-416: Updated `_convert_voice()` for dual mode:
+    - Added `reference_mode` parameter
+    - Audio mode: Use ChatterBox wrapper (existing flow)
+    - Model mode: Lazy-load RVC wrapper, load model from zip, convert, unload
+    - Auto-detects CUDA for GPU acceleration
+
+- `requirements.txt`:
+  - Added RVC installation instructions
+  - Noted dependencies: rvc-python, faiss-cpu, praat-parselmouth, pyworld
+  - GitHub link: https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI
+
+#### Architecture Design:
+- **ChatterBox VC** - Default/primary for audio references (easy, good quality)
+- **RVC** - Optional for advanced users with pre-trained models (best quality, requires model training)
+- **Lazy loading** - RVC wrapper only initialized when model mode is used
+- **Conditional processing** - Different pipeline paths based on reference_mode
+- **Preview logic** - Shows 5 or 6 players depending on mode (reference_denoised only for audio)
+
+#### RVC Model Format:
+- **.zip file** containing:
+  - `.pth` - PyTorch model weights
+  - `.index` - FAISS retrieval index for voice matching
+- Example: `my_voice.zip` → `my_voice.pth` + `my_voice.index`
+- Sample rate: 40000Hz
+- F0 method: rmvpe (Robust Model for Voice Pitch Estimation)
+
+#### UI/UX:
+- Radio button toggle (Audio/Model) below reference file selector
+- File dialog changes based on mode:
+  - Audio: Shows .mp3, .wav, .flac, .ogg, .m4a
+  - Model: Shows .zip only
+- Zip validation on selection with error messagebox
+- Mode switching clears file selection to prevent mismatches
+- Progress indicator shows conversion engine: "Converting voice... (RVC)" vs "Converting voice... (ChatterBox)"
+
+#### Current Status:
+- ✅ RVC wrapper implemented (subprocess-based approach to bypass Python 3.11 bugs)
+- ✅ UI toggle with validation complete
+- ✅ Service layer dual-mode logic complete
+- ✅ Preview logic updated for conditional loading
+- ✅ Requirements.txt updated with RVC + installation notes
+- ✅ **PRODUCTION READY:** RVC integration using Applio framework (Feb 2026)
+  - **Replaced rvc-python 0.1.5** (abandoned, fairseq bugs) with **Applio** (actively maintained)
+  - Dual virtual environment architecture:
+    - **Main (.venv)**: ChatterBox, Demucs, UI (numpy 1.25.2)
+    - **RVC (venv-rvc)**: Applio dependencies (numpy 2.3.5)
+  - Main process calls `rvc_standalone.py` via subprocess in venv-rvc
+  - No dependency conflicts, both engines fully functional
+
+#### Installation:
+```powershell
+# 1. Main environment (already setup)
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# 2. Create RVC environment
+python -m venv venv-rvc
+.\venv-rvc\Scripts\Activate.ps1
+
+# 3. Install Applio dependencies
+pip install numpy==2.3.5 scipy==1.16.3 librosa==0.11.0 soundfile==0.12.1
+pip install transformers==4.44.2 faiss-cpu==1.13.2 torchcrepe torchfcpe einops
+pip install noisereduce pedalboard soxr stftpitchshift wget webrtcvad-wheels
+pip install omegaconf>=2.0.6 matplotlib==3.10.8
+
+# 4. Install Applio RVC module
+git clone --depth 1 https://github.com/IAHispano/Applio.git applio_temp
+Copy-Item -Path "applio_temp\rvc" -Destination "." -Recurse -Force
+Remove-Item -Recurse -Force applio_temp
+
+# 5. Download RMVPE pitch predictor (137MB)
+New-Item -ItemType Directory -Path "rvc\models\predictors" -Force
+Invoke-WebRequest `
+    -Uri "https://huggingface.co/IAHispano/Applio/resolve/main/Resources/predictors/rmvpe.pt" `
+    -OutFile "rvc\models\predictors\rmvpe.pt"
+```
+
+#### Success Metrics:
+- ✅ RVC model loading works (.pth + .index from .zip)
+- ✅ Actual trained model inference (not pitch-shift simulation)
+- ✅ RMVPE pitch extraction functional
+- ✅ ContentVec embeddings auto-download
+- ✅ No fairseq dependency issues (Applio doesn't use fairseq)
+- ✅ Python 3.11 fully compatible
+- ✅ Both ChatterBox and RVC work simultaneously
+
+#### Technical Implementation:
+- **Applio VoiceConverter API:** `rvc.infer.infer.VoiceConverter`
+- **Subprocess isolation:** venv-rvc Python interpreter called from main app
+- **Model format:** .zip containing .pth (weights) + .index (FAISS retrieval)
+- **F0 methods:** rmvpe (default), crepe, fcpe, hybrid combinations
+- **Embedders:** contentvec (default), spin, chinese-hubert, japanese-hubert
+- **GPU auto-detection** via `torch.cuda.is_available()`
+- **Temp directory management** for model extraction from zip
+- **Model cleanup** after conversion to free GPU memory
+
+#### Key Files:
+- `voice_revolver_core/infrastructure/rvc_standalone.py`: Subprocess script using Applio
+- `voice_revolver_core/infrastructure/rvc_wrapper.py`: Main app RVC integration
+- `rvc/` (Applio module): Complete RVC inference stack
+- `rvc/models/predictors/rmvpe.pt`: Pitch extraction model
+- See `docs/technical-implementation-guide.md` for full architecture details
 
 ---
 

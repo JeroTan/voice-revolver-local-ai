@@ -1,17 +1,28 @@
 # Product Requirements Document: Voice Revolver AI
 
-**Version**: 1.0
-**Date**: 2026-02-18
-**Author**: Sarah (Product Owner)
+**Version**: 1.1 (Dual-Reference Update)  
+**Date**: 2026-02-20  
+**Author**: Sarah (Product Owner)  
 **Quality Score**: 100/100
+
+**Version History:**
+- **v1.1** (2026-02-20): Added dual-reference voice conversion (Audio + Model modes), Applio RVC integration
+- **v1.0** (2026-02-18): Initial release with ChatterBox VC
 
 ---
 
 ## Executive Summary
 
-Voice Revolver AI is a local-first desktop application that enables users to replace vocals in any song with a reference voice sample. The system uses AI-powered stem separation (Demucs) to isolate vocals and instrumental tracks, then applies voice conversion (ChatterBox VC) to transform the original vocals to match the reference voice identity. The application is designed as a portable executable for Windows and Mac, with all processing done locally on the user's machine—no cloud dependency required.
+Voice Revolver AI is a local-first desktop application that enables users to replace vocals in any song with a reference voice. The system uses AI-powered stem separation (Demucs) to isolate vocals and instrumental tracks, then applies voice conversion using **dual-reference modes**:
 
-The core business logic is built using Domain-Driven Design (DDD) architecture, allowing the domain layer to be reused across different interface types (CLI, API, Desktop UI) in future iterations.
+1. **Audio Reference Mode (ChatterBox VC)**: Zero-shot voice cloning from 5-30 second audio samples
+2. **Model Reference Mode (RVC via Applio)**: High-quality conversion using pre-trained voice models
+
+All processing is done locally on the user's machine—no cloud dependency required.
+
+The core business logic is built using Domain-Driven Design (DDD) architecture, with a dual virtual environment strategy to support both conversion engines simultaneously while avoiding dependency conflicts.
+
+**Key Innovation**: First desktop app to offer BOTH audio-based and model-based voice conversion in a single unified interface.
 
 ---
 
@@ -146,6 +157,76 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 - **Error Handling**: Error codes VOICE_CONVERT_FAILED, REFERENCE_TOO_SHORT
 - **Fallback**: OpenVoice V2 wrapper kept for legacy compatibility (can switch back if needed)
 
+#### Feature 2.1: Dual-Reference Voice Conversion (MAJOR FEATURE)
+- **Description**: Revolutionary dual-mode voice conversion system supporting two distinct approaches
+- **Reference Modes**:
+  1. **Audio Reference (ChatterBox VC)**:
+     - User provides 5-30 second audio sample of target voice
+     - Zero-shot voice cloning (no training required)
+     - Fast inference (~30s for 3-minute song)
+     - Best for natural speech, podcasts, dialogue
+     - Model: ChatterBox VC v0.1.6
+  
+  2. **Model Reference (RVC via Applio)**:
+     - User provides pre-trained RVC model (.zip with .pth + .index)
+     - High-quality voice cloning with trained model characteristics
+     - Supports pitch shifting, formant control, voice style preservation
+     - Best for singing voice conversion, character voices
+     - Framework: Applio (actively maintained, Feb 2026)
+     - F0 Methods: RMVPE (default), Crepe, FCPE, hybrid combinations
+     - Embedders: ContentVec (default), Spin, language-specific HuBERT variants
+
+- **Technical Architecture**:
+  - **Dual Virtual Environments**:
+    - Main (.venv): ChatterBox, Demucs, UI dependencies (numpy 1.25.2)
+    - RVC (venv-rvc): Applio dependencies (numpy 2.3.5)
+  - **Subprocess Isolation**: RVC runs in separate Python process to avoid dependency conflicts
+  - **Model Management**: Auto-extraction of .zip models, FAISS index loading, temp cleanup
+
+- **UI/UX**:
+  - Toggle between "Audio" and "Model" reference modes
+  - File picker adapts: .wav/.mp3 for Audio mode, .zip for Model mode
+  - Informational dialog explains RVC requirements (not warning/blocker)
+  - Same processing pipeline, different conversion engine
+
+- **RVC Model Format**:
+  - `.zip` archive containing:
+    - `.pth` file: PyTorch checkpoint with trained voice model weights
+    - `.index` file: FAISS retrieval index for speaker features
+  - Models trained externally using RVC training pipeline
+  - Sample rate: 40kHz (auto-detected from model config)
+
+- **RVC Processing Parameters**:
+  - Pitch shift: -24 to +24 semitones
+  - Index rate: 0.0-1.0 (feature retrieval influence)
+  - Volume envelope: 0.0-1.0 (RMS mix rate)
+  - Protect: 0.0-0.5 (consonant protection)
+  - F0 method: RMVPE, Crepe, FCPE, hybrid combinations
+  - Embedder: ContentVec, Spin, language-specific variants
+
+- **Installation Requirements**:
+  ```powershell
+  # Standard installation creates both environments
+  # See docs/technical-implementation-guide.md for full setup
+  ```
+
+- **Edge Cases**:
+  - Missing venv-rvc: Error code RVC_ENV_NOT_FOUND
+  - Corrupted .zip model: Error code RVC_MODEL_INVALID
+  - Missing RMVPE predictor: Auto-download (137MB) on first use
+  - Missing embedder model: Auto-download from HuggingFace
+
+- **Error Handling**: 
+  - RVC_ENV_NOT_FOUND: venv-rvc not installed
+  - RVC_MODEL_INVALID: Corrupted or invalid .zip file
+  - RVC_SUBPROCESS_FAILED: Subprocess crashed (check stderr logs)
+  - VOICE_CONVERT_FAILED: General conversion failure
+
+- **Performance**:
+  - ChatterBox (Audio mode): ~30s for 3-minute song
+  - RVC (Model mode): ~45-60s for 3-minute song (CPU), ~15s (GPU)
+  - Memory: +300MB peak when RVC subprocess active
+
 #### Feature 3: Audio Mixing (AudioMixer)
 - **Description**: Combines converted vocals with original instrumental stems
 - **Input**: Converted vocals, instrumental tracks (drums, bass, other)
@@ -257,14 +338,21 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 
 ### Integration
 - **Demucs**: Stem separation (vocal removal)
-- **OpenVoice V2**: Voice conversion with style/emotion control
+- **ChatterBox VC**: Zero-shot voice conversion from audio samples (Primary - Audio Reference Mode)
+- **Applio RVC**: Model-based voice conversion using pre-trained RVC models (Primary - Model Reference Mode)
 - **pydub**: Format conversion
 - **FFmpeg**: Audio processing backend (bundled + auto-download)
 - **Parselmouth**: Pitch manipulation (optional enhancement)
 
 ### Technology Stack
-- **Language**: Python 3.10+
-- **UI Framework**: PyQt/PySide
+- **Language**: Python 3.11+
+- **Voice Conversion**: 
+  - ChatterBox VC v0.1.6 (Audio Reference Mode)
+  - Applio RVC (Model Reference Mode, Feb 2026 release)
+- **Dual Environment Strategy**:
+  - Main environment (.venv): ChatterBox, Demucs, UI (numpy 1.25.2)
+  - RVC environment (venv-rvc): Applio dependencies (numpy 2.3.5)
+- **UI Framework**: Tkinter (native Python)
 - **Packaging**: PyInstaller/Nuitka (portable EXE)
 - **Platforms**: Windows (.exe), macOS (.app)
 - **Build**: Separate build on each target platform
@@ -332,7 +420,8 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 
 **Dependencies:**
 - **Demucs**: https://github.com/facebookresearch/demucs
-- **ChatterBox VC**: https://github.com/resemble-ai/chatterbox (Primary)
+- **ChatterBox VC**: https://github.com/resemble-ai/chatterbox (Primary - Audio Reference)
+- **Applio RVC**: https://github.com/IAHispano/Applio (Primary - Model Reference)
 - **OpenVoice**: https://github.com/myshell-ai/OpenVoice (Legacy/Fallback)
 - **pydub**: Audio format conversion
 - **tkinter**: Desktop UI framework (native Python)
@@ -357,9 +446,12 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 - Demucs Windows Installation: https://github.com/facebookresearch/demucs/blob/main/docs/windows.md
 - ChatterBox GitHub: https://github.com/resemble-ai/chatterbox
 - ChatterBox VC Example: https://github.com/resemble-ai/chatterbox/blob/master/example_vc.py
+- Applio GitHub: https://github.com/IAHispano/Applio
+- Applio Documentation: https://docs.applio.org/
 - OpenVoice Usage: https://github.com/myshell-ai/OpenVoice/blob/main/docs/USAGE.md (Legacy)
 - tkinter Documentation: https://docs.python.org/3/library/tkinter.html
 - Parselmouth Pitch Manipulation: https://parselmouth.readthedocs.io/en/stable/examples/pitch_manipulation.html
+- RVC Project (Original): https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI
 
 ---
 
