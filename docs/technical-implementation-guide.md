@@ -1112,12 +1112,26 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-# RVC environment
+# For GPU acceleration (NVIDIA GPUs):
+pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118 --force-reinstall
+pip install nvidia-cudnn-cu11 nvidia-cublas-cu11
+
+# RVC environment (required for RVC model support)
 python -m venv venv-rvc
 .\venv-rvc\Scripts\Activate.ps1
 pip install numpy==2.3.5 scipy==1.16.3 librosa==0.11.0 soundfile==0.12.1
 pip install transformers==4.44.2 faiss-cpu==1.13.2 torchcrepe torchfcpe
 pip install noisereduce pedalboard soxr wget
+
+# MDX environment (OPTIONAL - for best vocal isolation)
+python -m venv venv-mdx
+.\venv-mdx\Scripts\Activate.ps1
+pip install audio-separator[cpu]>=0.18.0
+# For GPU (recommended):
+pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118 --force-reinstall
+pip install nvidia-cudnn-cu11 nvidia-cublas-cu11
+pip install "numpy<2.0" --force-reinstall --no-deps
+pip install static-ffmpeg
 ```
 
 ### Run Application

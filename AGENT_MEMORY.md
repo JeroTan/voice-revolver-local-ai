@@ -481,20 +481,36 @@ pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.
 python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
 ```
 
-#### Common Issues:
-- **"caffe2_nvrtc.dll not found"**: CUDA Toolkit 11.8 not installed
-  - Solution: Download and install CUDA Toolkit 11.8, restart PC
-  - OR: Reinstall CPU-only PyTorch if you don't want GPU acceleration
+#### Additional Dependency: cuDNN
+After installing PyTorch with CUDA, you must also install cuDNN:
+```powershell
+# Install cuDNN libraries via pip (easiest method)
+pip install nvidia-cudnn-cu11 nvidia-cublas-cu11
+```
+
+Without cuDNN, you'll see errors like:
+- `"cudnn_cnn_infer64_8.dll not found"`
+- `torch.cuda.is_available()` returns False even with CUDA Toolkit installedCommon Issues:
+- **"caffe2_nvrtc.dll not found"** or **"cudnn*.dll not found"**: CUDA Toolkit or cuDNN missing
+  - Solution 1: Install CUDA Toolkit 11.8 from NVIDIA, then `pip install nvidia-cudnn-cu11`
+  - Solution 2: Reinstall CPU-only PyTorch if you don't want GPU acceleration
 - **GPU not detected**: CPU-only PyTorch installed instead of CUDA version
   - Solution: Follow reinstallation steps above
+- **Corrupted PyTorch (~orch folder)**: Symptom of failed PyTorch installation
+  - Solution: `Remove-Item ".\venv\Lib\site-packages\~orch*" -Recurse -Force`, then reinstall
+- **File locked errors during reinstall**: App or Python process holding torch DLLs
+  - Solution: Close Voice Revolver, kill all python.exe processes, then reinstall
 
 #### Testing:
-- RTX 4050 GPU confirmed working after CUDA PyTorch installation
+- RTX 4050 GPU confirmed working (6GB VRAM sufficient)
 - Speed improvements: ~10-20x faster than CPU for MDX, Demucs, ChatterBox
-- MDX: 30 minutes (CPU) → ~2 minutes (GPU)
+- Demucs: 2-5 min (CPU) → 15-30 sec (GPU)
+- MDX: 30 min (CPU) → ~2 min (GPU)
+- ChatterBox: 30 sec (CPU) → 8 sec (GPU)
 
 #### Key Files:
 - `voice_revolver_core/infrastructure/compute_controller.py`: GPU detection logic
+- `voice_revolver_ui/main_tk.py`: Startup dialog with GPU/CPU selection
 - `requirements.txt`: PyTorch installation configuration
 
 ---
@@ -518,12 +534,46 @@ python -c "import torch; print('CUDA available:', torch.cuda.is_available()); pr
 # Create MDX environment (OPTIONAL)
 python -m venv venv-mdx
 .\venv-mdx\Scripts\Activate.ps1
+
+# Install audio-separator
 pip install audio-separator[cpu]>=0.18.0
+
+# For GPU acceleration (RECOMMENDED if you have NVIDIA GPU):
+# 1. Install PyTorch with CUDA 11.8
+pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118 --force-reinstall
+
+# 2. Install cuDNN (required for CUDA PyTorch)
+pip install nvidia-cudnn-cu11 nvidia-cublas-cu11
+
+# 3. Downgrade NumPy to 1.x (audio-separator incompatible with NumPy 2.x)
+pip install "numpy<2.0" --force-reinstall --no-deps
+
+# 4. Install static-ffmpeg (required for audio processing)
+pip install static-ffmpeg
+
+# Verify GPU setup (should show "CUDA available: True")
+python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'None')"
 ```
+
+#### GPU Setup Notes (venv-mdx):
+- **Separate PyTorch installation**: venv-mdx needs its own CUDA PyTorch (same version as main venv)
+- **NumPy compatibility**: audio-separator requires NumPy 1.x, will crash with NumPy 2.x
+  - Error: `"A module that was compiled using NumPy 1.x cannot be run in NumPy 2.x"`
+  - Solution: `pip install "numpy<2.0" --force-reinstall --no-deps`
+- **FFmpeg required**: MDX subprocess needs FFmpeg in PATH
+  - Solution: `pip install static-ffmpeg` (auto-configures in mdx_standalone.py)
+- **Device auto-detection**: `audio_separator.Separator` auto-detects GPU from `torch.cuda.is_available()`
+  - No manual device parameter needed in Separator.__init__()
+  - Device passed via command-line argument to mdx_standalone.py
+- **Speed with GPU**: 30 minutes (CPU) → 2 minutes (GPU) for 4-minute song
 
 #### Technical Implementation:
 - **Subprocess isolation:** venv-mdx Python interpreter called from main app
-- **Model:** MDX23C-8KFFT-InstVoc_HQ.ckpt (~448MB, auto-downloads)
+- **Device parameter passing:** Main app passes device (cuda/cpu) as command-line argument
+  - `mdx_wrapper.py` adds device to subprocess command: `command.append(self._device)`
+  - `mdx_standalone.py` receives device, configures FFmpeg before importing Separator
+  - FFmpeg configuration MUST happen before `from audio_separator.separator import Separator`
+- **Model:** MDX23C-8KFFT-InstVoc_HQ.ckpt (~448MB, auto-downloads to `~/.audio-separator/models/`)
 - **Output:** 2-stem (vocals + instrumental) - drums/bass are silent placeholders
 - **Fallback:** If venv-mdx missing, app auto-falls back to Demucs
 - **UI:** Dropdown selector in Settings: "demucs" (default) | "mdx" (experimental)
@@ -532,9 +582,20 @@ pip install audio-separator[cpu]>=0.18.0
   - MDX best for: GPU users or when absolute best vocal isolation needed
 
 #### Key Files:
-- `voice_revolver_core/infrastructure/mdx_standalone.py`: Subprocess script in venv-mdx
+- `voice_revolver_core/infrastructure/mdx_standalone.py`: Subprocess script (runs in venv-mdx)
+  - Configures static-ffmpeg before importing Separator
+  - Auto-detects GPU from torch.cuda.is_available()
 - `voice_revolver_core/infrastructure/mdx_wrapper.py`: Main app MDX integration
+  - Passes device parameter to subprocess via command-line
+  - Handles model loading check and error fallback
 - `~/.audio-separator/models/MDX23C-8KFFT-InstVoc_HQ.ckpt`: Auto-downloaded model
+
+#### Recent Fixes (Feb 20-21, 2026):
+- ✅ Fixed device parameter not passed to MDX subprocess (was always CPU)
+- ✅ Fixed NumPy 2.x compatibility (downgraded to 1.26.4 in venv-mdx)
+- ✅ Fixed FFmpeg not found (static-ffmpeg configured before Separator import)
+- ✅ Fixed Separator parameter error (removed invalid `use_cuda` and `cpu_offload` params)
+- ✅ GPU acceleration now working (~15x speedup vs CPU)
 
 #### Success Metrics:
 - ✅ MDX wrapper uses subprocess (no dependency conflicts)

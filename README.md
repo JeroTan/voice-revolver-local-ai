@@ -37,8 +37,20 @@ python run.py
 ## Requirements
 
 - Python 3.11.x (recommended)
-- Virtual environment: `.venv` (main) + `venv-rvc` (RVC isolation)
+- Virtual environments: 
+  - `.venv` (main application)
+  - `venv-rvc` (RVC model support - required)
+  - `venv-mdx` (MDX stem separation - optional for best vocal isolation)
+- **For GPU acceleration (NVIDIA GPUs)**:
+  - CUDA Toolkit 11.8: [Download](https://developer.nvidia.com/cuda-11-8-0-download-archive)
+  - After `pip install -r requirements.txt`, run:
+    ```powershell
+    pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118 --force-reinstall
+    pip install nvidia-cudnn-cu11 nvidia-cublas-cu11
+    ```
+  - Speed improvements: ~10-20x faster (Demucs: 2-5min → 15-30sec, MDX: 30min → 2min)
 - See `requirements.txt` for full dependencies
+- See **[AGENT_MEMORY.md](AGENT_MEMORY.md)** for detailed GPU setup troubleshooting
 
 ## License
 
