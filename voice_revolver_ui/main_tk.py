@@ -38,6 +38,7 @@ from voice_revolver_core.infrastructure.demucs_wrapper import DemucsWrapper
 from voice_revolver_core.infrastructure.chatterbox_wrapper import ChatterBoxWrapper
 from voice_revolver_core.infrastructure.audio_mixer import AudioMixer
 from voice_revolver_core.infrastructure.format_converter import FormatConverter
+from voice_revolver_core.infrastructure.resemble_enhance_wrapper import is_resemble_enhance_available, enhance_vocals
 from voice_revolver_core.domain.file_manager import FileManager
 from voice_revolver_core.domain.progress_tracker import ProgressTracker
 from voice_revolver_core.domain.base import VoiceConversionParams, AudioStems
@@ -512,6 +513,23 @@ class VoiceRevolverApp:
                                               command=self._on_gender_alignment_change)
         gender_alignment_check.grid(row=file_row, column=0, columnspan=3, sticky=tk.W, pady=5)
         
+        # Improve Vocals checkbox (Resemble Enhance - Phase 2.7)
+        file_row += 1
+        self.improve_vocals_var = tk.BooleanVar(value=False)
+        self.improve_vocals_check = ttk.Checkbutton(left_top_frame, text="Improve Vocals (may take time)", 
+                                              variable=self.improve_vocals_var)
+        self.improve_vocals_check.grid(row=file_row, column=0, columnspan=3, sticky=tk.W, pady=5)
+        
+        # Check if resemble-enhance is available and disable checkbox if not
+        if not is_resemble_enhance_available():
+            self.improve_vocals_check.config(state='disabled')
+            # Create tooltip label
+            tooltip_label = ttk.Label(left_top_frame, 
+                                     text="(Requires venv-enhance - see docs/venv-enhance-setup.md)",
+                                     foreground="gray", 
+                                     font=("Segoe UI", 8))
+            tooltip_label.grid(row=file_row, column=0, columnspan=3, sticky=tk.W, padx=(20, 0))
+        
         # Vocal Match selection (Phase 2: Target gender to match the original vocal to)
         file_row += 1
         self.orig_gender_frame = ttk.Frame(left_top_frame)
@@ -887,13 +905,52 @@ class VoiceRevolverApp:
                 # Update gender radio button on UI thread
                 self.root.after(0, self.original_gender_var.set, detected_gender)
             
-            progress_cb(80, "Loading vocals into spectrum editor...")
+            # 4. Enhance vocals using Resemble Enhance if requested (Phase 2.7)
+            enhanced_vocals_path = None
+            if self.improve_vocals_var.get() and is_resemble_enhance_available():
+                try:
+                    progress_cb(75, "Enhancing vocals (AI-powered)...")
+                    self.log("→ Starting vocal enhancement (Resemble Enhance, RK4 solver)...")
+                    
+                    # Create output path
+                    enhanced_vocals_path = output_dir / "vocals_enhanced.wav"
+                    
+                    # Progress tracking for enhancement
+                    def enhance_progress_cb(percent, msg):
+                        # Map 0-100% of enhancement to 75-85% overall progress
+                        overall_percent = 75 + (percent * 0.10)
+                        progress_cb(overall_percent, f"Enhancing: {msg}")
+                    
+                    # Run enhancement (fixed settings: RK4, 100 steps, 0.33 temp, no denoise)
+                    success = enhance_vocals(
+                        input_path=str(stems.vocals),
+                        output_path=str(enhanced_vocals_path),
+                        solver="rk4",
+                        nfe=100,
+                        temperature=0.33,
+                        denoise_first=False,
+                        progress_callback=enhance_progress_cb
+                    )
+                    
+                    if success and enhanced_vocals_path.exists():
+                        self.log(f"✓ Vocal enhancement complete: {enhanced_vocals_path}")
+                    else:
+                        self.log("⚠ Enhancement failed, using original vocals")
+                        enhanced_vocals_path = None
+                        
+                except Exception as e:
+                    self.log(f"⚠ Enhancement error: {e}")
+                    self.log("Using original vocals instead")
+                    enhanced_vocals_path = None
             
-            # 4. Load RAW vocals (no enhancement) with pre-populated pitch curve only
+            progress_cb(85, "Loading vocals into spectrum editor...")
+            
+            # 5. Pass both original and enhanced vocals to UI (for blend mode support)
             self.root.after(0, self._separation_complete_callback, 
-                          stems.vocals,  # Use raw vocals, NOT enhanced
+                          stems.vocals,  # Always pass original vocals
                           detected_gender,
-                          initial_pitch_shift)
+                          initial_pitch_shift,
+                          enhanced_vocals_path)  # Pass enhanced if available, otherwise None
             
         except Exception as e:
             error_msg = f"Separation failed: {str(e)}"
@@ -901,13 +958,21 @@ class VoiceRevolverApp:
             self.log(traceback.format_exc())
             self.root.after(0, self._separation_failed_callback, error_msg)
     
-    def _separation_complete_callback(self, vocals_path, detected_gender, initial_pitch_shift=0):
-        """UI thread callback when separation completes successfully"""
+    def _separation_complete_callback(self, vocals_path, detected_gender, initial_pitch_shift=0, enhanced_vocals_path=None):
+        """UI thread callback when separation completes successfully
+        
+        Args:
+            vocals_path: Path to original separated vocals
+            detected_gender: Detected gender ("male" or "female")
+            initial_pitch_shift: Initial pitch shift in semitones
+            enhanced_vocals_path: Optional path to enhanced vocals (Phase 2.7)
+        """
         try:
-            # Load vocals into spectrum editor with pre-populated pitch curve only
+            # Load vocals into spectrum editor with both original and enhanced (if available)
             self.spectrum_editor.load_vocals(
                 vocals_path,
-                initial_pitch_shift=initial_pitch_shift
+                initial_pitch_shift=initial_pitch_shift,
+                enhanced_vocal_path=enhanced_vocals_path
             )
             
             #Set flags
@@ -1006,7 +1071,7 @@ class VoiceRevolverApp:
         threading.Thread(target=self._apply_curves_worker, args=(curves,), daemon=False).start()
     
     def _apply_curves_worker(self, curves):
-        """Background worker to apply curves"""
+        """Background worker to apply curves (Phase 2.7: includes blend)"""
         try:
             from voice_revolver_core.infrastructure.audio_processor import AudioProcessor
             
@@ -1025,9 +1090,35 @@ class VoiceRevolverApp:
                 except:
                     pass
             
+            # Phase 2.7: Apply blend curve FIRST (if enhanced vocals available and blend curve has edits)
+            if curves.get('blend') and curves['blend'].has_edits():
+                # Check if enhanced vocals exist
+                enhanced_vocals_path = None
+                if hasattr(self.spectrum_editor, 'enhanced_vocal_path') and self.spectrum_editor.enhanced_vocal_path:
+                    enhanced_vocals_path = self.spectrum_editor.enhanced_vocal_path
+                
+                if enhanced_vocals_path and enhanced_vocals_path.exists():
+                    self.root.after(0, self._update_progress, 10, "Blending original and enhanced vocals...")
+                    self.root.after(0, self.log, "→ Applying blend curve...")
+                    
+                    blend_output = preview_dir / "vocals_blend.wav"
+                    success = processor.apply_blend_curve(
+                        self.original_vocals_path,
+                        enhanced_vocals_path,
+                        blend_output,
+                        curves['blend']
+                    )
+                    if success and blend_output.exists():
+                        current_audio = blend_output
+                        self.root.after(0, self.log, "  ✓ Blend curve applied (original + enhanced mixed)")
+                    else:
+                        raise RuntimeError("Failed to apply blend curve")
+                else:
+                    self.root.after(0, self.log, "  ⚠ Enhanced vocals not available, skipping blend")
+            
             # Apply pitch curve
             if curves['pitch'].has_edits():
-                self.root.after(0, self._update_progress, 20, "Applying pitch curve...")
+                self.root.after(0, self._update_progress, 30, "Applying pitch curve...")
                 self.root.after(0, self.log, "→ Applying pitch curve...")
                 
                 pitch_output = preview_dir / "vocals_pitch.wav"
@@ -1044,7 +1135,7 @@ class VoiceRevolverApp:
             
             # Apply volume curve
             if curves['volume'].has_edits():
-                self.root.after(0, self._update_progress, 50, "Applying volume curve...")
+                self.root.after(0, self._update_progress, 60, "Applying volume curve...")
                 self.root.after(0, self.log, "→ Applying volume curve...")
                 
                 volume_output = preview_dir / "vocals_volume.wav"
@@ -1061,7 +1152,7 @@ class VoiceRevolverApp:
             
             # Apply reverb curve
             if curves['reverb'].has_edits():
-                self.root.after(0, self._update_progress, 80, "Applying reverb curve...")
+                self.root.after(0, self._update_progress, 90, "Applying reverb curve...")
                 self.root.after(0, self.log, "→ Applying reverb curve...")
                 
                 reverb_output = preview_dir / "vocals_reverb.wav"

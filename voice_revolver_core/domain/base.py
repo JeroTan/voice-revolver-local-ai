@@ -241,6 +241,49 @@ class NoiseCurve:
 
 
 @dataclass
+class BlendControlPoint:
+    """Single control point for enhancement blend automation"""
+    time: float  # Seconds into audio
+    enhanced_percent: float  # Blend ratio (0-100%): 0=original, 100=enhanced
+
+
+@dataclass
+class BlendCurve:
+    """Enhancement blend automation curve for spectrum editor
+    
+    Controls time-varying mix between original and enhanced vocals.
+    0% = fully original vocals (no enhancement)
+    100% = fully enhanced vocals (maximum enhancement)
+    """
+    control_points: list = field(default_factory=list)  # List of BlendControlPoint
+    interpolation: str = "linear"
+    
+    def has_edits(self) -> bool:
+        """Check if curve has any user edits"""
+        return len(self.control_points) > 0
+    
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for project save"""
+        return {
+            "control_points": [
+                {"time": pt.time, "enhanced_percent": pt.enhanced_percent}
+                for pt in self.control_points
+            ],
+            "interpolation": self.interpolation
+        }
+    
+    @staticmethod
+    def from_dict(data: dict) -> 'BlendCurve':
+        """Deserialize from dictionary"""
+        curve = BlendCurve(interpolation=data.get("interpolation", "linear"))
+        for pt_data in data.get("control_points", []):
+            curve.control_points.append(
+                BlendControlPoint(time=pt_data["time"], enhanced_percent=pt_data["enhanced_percent"])
+            )
+        return curve
+
+
+@dataclass
 class ProjectData:
     """Project data for .vra files"""
     original_file: Optional[str] = None

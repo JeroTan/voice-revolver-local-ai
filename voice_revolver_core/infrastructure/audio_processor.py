@@ -860,3 +860,94 @@ class AudioProcessor:
         except Exception as e:
             logger.error(f"Reverb curve application failed for {audio_path}: {e}")
             return False
+    
+    def apply_blend_curve(
+        self,
+        original_path: Path,
+        enhanced_path: Path,
+        output_path: Path,
+        blend_curve,
+        sr: int = 44100
+    ) -> bool:
+        """
+        Apply time-varying blend between original and enhanced vocals (Phase 2.7).
+        
+        Mixes original and enhanced vocals based on user-edited blend curve.
+        At each time point, interpolates blend percentage between control points.
+        
+        Formula: output = original * (1 - blend/100) + enhanced * (blend/100)
+        Where blend = 0% → 100% original, blend = 100% → 100% enhanced
+        
+        Args:
+            original_path: Path to original vocal audio file
+            enhanced_path: Path to enhanced vocal audio file
+            output_path: Output audio file path
+            blend_curve: BlendCurve object with control points (time, enhanced_percent)
+            sr: Target sample rate (default: 44100)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not blend_curve or not blend_curve.has_edits():
+                logger.info("No blend curve edits, using original vocals")
+                # No blend curve: just copy original
+                import shutil
+                shutil.copy(str(original_path), str(output_path))
+                return True
+            
+            logger.info(f"Applying blend curve ({len(blend_curve.control_points)} control points)")
+            
+            # Load both audio files
+            original, orig_sr = librosa.load(str(original_path), sr=sr, mono=True)
+            enhanced, enh_sr = librosa.load(str(enhanced_path), sr=sr, mono=True)
+            
+            # Ensure same length (pad shorter one with zeros)
+            max_length = max(len(original), len(enhanced))
+            if len(original) < max_length:
+                original = np.pad(original, (0, max_length - len(original)))
+            if len(enhanced) < max_length:
+                enhanced = np.pad(enhanced, (0, max_length - len(enhanced)))
+            
+            duration = len(original) / sr
+            
+            # Create time points for each audio sample
+            time_points = np.arange(len(original)) / sr
+            
+            # Sample the blend curve at each time point
+            from voice_revolver_core.domain.base import BlendCurve
+            blend_percents = []
+            
+            if len(blend_curve.control_points) == 1:
+                # Single point: constant blend throughout
+                blend_percent = blend_curve.control_points[0].enhanced_percent
+                blend_percents = np.full(len(time_points), blend_percent)
+            else:
+                # Multiple points: interpolate using cubic spline
+                from scipy.interpolate import CubicSpline
+                
+                times = np.array([pt.time for pt in blend_curve.control_points])
+                percents = np.array([pt.enhanced_percent for pt in blend_curve.control_points])
+                
+                # Create cubic spline interpolation
+                cs = CubicSpline(times, percents, extrapolate=True)
+                blend_percents = cs(time_points)
+                
+                # Clamp to valid range [0, 100]
+                blend_percents = np.clip(blend_percents, 0, 100)
+            
+            # Apply blend: output = original * (1 - blend/100) + enhanced * (blend/100)
+            blend_factors = blend_percents / 100.0  # Convert to 0-1 range
+            blended_audio = original * (1 - blend_factors) + enhanced * blend_factors
+            
+            # Save output
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(str(output_path), blended_audio, sr)
+            
+            logger.info(f"Blend curve applied, saved to {output_path.name}")
+            logger.info(f"  Blend range: {blend_percents.min():.1f}% to {blend_percents.max():.1f}% enhanced")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Blend curve application failed: {e}")
+            return False

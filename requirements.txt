@@ -54,6 +54,14 @@ noisereduce
 pedalboard
 pyloudnorm
 
+# Resemble Enhance - REQUIRES SEPARATE VENV (venv-enhance)
+# Install in separate environment to avoid dependency conflicts:
+#   python -m venv venv-enhance
+#   .\venv-enhance\Scripts\Activate.ps1
+#   pip install resemble-enhance --upgrade
+# Reason: Requires scipy>=1.11.4, numpy>=1.26.2, deepspeed (Windows incompatible)
+# Called via subprocess from main app (see resemble_enhance_wrapper.py)
+
 # Visualization & UI (Phase 2)
 matplotlib>=3.8.0
 scipy>=1.10.0

@@ -60,7 +60,8 @@ from voice_revolver_core.domain.base import (
     PitchCurve, PitchControlPoint,
     ReverbCurve, ReverbControlPoint,
     VolumeCurve, VolumeControlPoint,
-    NoiseCurve, NoiseControlPoint
+    NoiseCurve, NoiseControlPoint,
+    BlendCurve, BlendControlPoint
 )
 
 logger = logging.getLogger(__name__)
@@ -90,11 +91,17 @@ class SpectrumEditor(ttk.Frame):
         self.sample_rate: Optional[int] = None
         self.duration: float = 0.0
         
-        # Three independent editing curves
+        # Enhanced vocals support (Phase 2.7)
+        self.enhanced_vocal_path: Optional[Path] = None
+        self.enhanced_audio_data: Optional[np.ndarray] = None
+        self.has_enhancement = False  # Flag for blend mode availability
+        
+        # Five independent editing curves (Phase 2.7 adds blend)
         self.pitch_curve = PitchCurve()
         self.reverb_curve = ReverbCurve()
         self.volume_curve = VolumeCurve()
         self.noise_curve = NoiseCurve()
+        self.blend_curve = BlendCurve()  # Phase 2.7: Blend original vs enhanced vocals
         
         # Current editing mode
         self.current_mode = "pitching"
@@ -311,29 +318,77 @@ class SpectrumEditor(ttk.Frame):
         )
         self.noise_radio.pack(side=tk.LEFT, padx=20)
         
+        # Blend mode (Phase 2.7 - only shown if has_enhancement)
+        self.blend_radio = ttk.Radiobutton(
+            button_container,
+            text="Blend (Enhanced)",
+            value="blend",
+            variable=self.mode_var,
+            command=self._switch_mode
+        )
+        self.blend_radio.pack(side=tk.LEFT, padx=20)
+        self.blend_radio.pack_forget()  # Hidden initially until enhanced vocals loaded
+        
         # Connect matplotlib events for interactive editing
         self.canvas.mpl_connect('button_press_event', self._on_click)
         self.canvas.mpl_connect('motion_notify_event', self._on_drag)
         self.canvas.mpl_connect('button_release_event', self._on_release)
         self.canvas.mpl_connect('motion_notify_event', self._on_hover)
     
-    def load_vocals(self, vocal_path: Path, initial_pitch_shift: float = 0):
+    def load_vocals(self, vocal_path: Path, initial_pitch_shift: float = 0, enhanced_vocal_path: Optional[Path] = None):
         """Load separated vocals and display spectrum
         
         Args:
-            vocal_path: Path to vocal audio file
+            vocal_path: Path to original vocal audio file
             initial_pitch_shift: Initial pitch shift in semitones (from gender alignment)
+            enhanced_vocal_path: Optional path to enhanced vocal audio file (Phase 2.7)
         """
         try:
             logger.info(f"Loading vocals for spectrum editor: {vocal_path}")
             
             self.vocal_path = vocal_path
             
-            # Load audio with librosa
+            # Load original audio with librosa
             self.audio_data, self.sample_rate = librosa.load(str(vocal_path), sr=None, mono=True)
             self.duration = len(self.audio_data) / self.sample_rate
             
             logger.info(f"Loaded audio: {self.duration:.2f}s at {self.sample_rate}Hz")
+            
+            # Load enhanced vocals if provided (Phase 2.7)
+            self.enhanced_vocal_path = None
+            self.enhanced_audio_data = None
+            self.has_enhancement = False
+            
+            if enhanced_vocal_path and enhanced_vocal_path.exists():
+                try:
+                    logger.info(f"Loading enhanced vocals: {enhanced_vocal_path}")
+                    self.enhanced_audio_data, enhanced_sr = librosa.load(str(enhanced_vocal_path), sr=None, mono=True)
+                    
+                    # Verify sample rates match
+                    if enhanced_sr != self.sample_rate:
+                        logger.warning(f"Sample rate mismatch: {self.sample_rate}Hz vs {enhanced_sr}Hz, resampling enhanced...")
+                        self.enhanced_audio_data = librosa.resample(
+                            self.enhanced_audio_data, 
+                            orig_sr=enhanced_sr, 
+                            target_sr=self.sample_rate
+                        )
+                    
+                    # Ensure same length (pad or trim)
+                    if len(self.enhanced_audio_data) < len(self.audio_data):
+                        # Pad with zeros
+                        padding = len(self.audio_data) - len(self.enhanced_audio_data)
+                        self.enhanced_audio_data = np.pad(self.enhanced_audio_data, (0, padding))
+                    elif len(self.enhanced_audio_data) > len(self.audio_data):
+                        # Trim to match
+                        self.enhanced_audio_data = self.enhanced_audio_data[:len(self.audio_data)]
+                    
+                    self.enhanced_vocal_path = enhanced_vocal_path
+                    self.has_enhancement = True
+                    logger.info(f"✓ Enhanced vocals loaded ({len(self.enhanced_audio_data)} samples)")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to load enhanced vocals: {e}")
+                    self.has_enhancement = False
             
             # Initialize curves with optional pre-populated values
             self.pitch_curve = PitchCurve()
@@ -354,6 +409,13 @@ class SpectrumEditor(ttk.Frame):
             
             # Draw initial view
             self._redraw_spectrum()
+            
+            # Show/hide blend mode button based on enhancement availability (Phase 2.7)
+            if self.has_enhancement:
+                self.blend_radio.pack(side=tk.LEFT, padx=20)
+                logger.info("✓ Blend mode available (enhanced vocals loaded)")
+            else:
+                self.blend_radio.pack_forget()
             
             # Enable playback controls
             if PYGAME_AVAILABLE:
@@ -449,18 +511,22 @@ class SpectrumEditor(ttk.Frame):
         
         self.ax.clear()
         
-        # Always plot waveform as semi-transparent background
-        self._plot_waveform_background()
-        
-        # Overlay mode-specific visualization
-        if self.current_mode == "pitching":
-            self._draw_pitch_view()
-        elif self.current_mode == "reverb":
-            self._draw_reverb_view()
-        elif self.current_mode == "volume":
-            self._draw_volume_view()
-        elif self.current_mode == "noise":
-            self._draw_noise_view()
+        # For blend mode, show dual waveforms instead of single background
+        if self.current_mode == "blend" and self.has_enhancement:
+            self._draw_blend_view()
+        else:
+            # Always plot waveform as semi-transparent background (other modes)
+            self._plot_waveform_background()
+            
+            # Overlay mode-specific visualization
+            if self.current_mode == "pitching":
+                self._draw_pitch_view()
+            elif self.current_mode == "reverb":
+                self._draw_reverb_view()
+            elif self.current_mode == "volume":
+                self._draw_volume_view()
+            elif self.current_mode == "noise":
+                self._draw_noise_view()
         
         self.ax.set_xlim(0, self.duration)
         self.ax.set_xlabel("Time (seconds)")
@@ -580,6 +646,58 @@ class SpectrumEditor(ttk.Frame):
             # Draw straight lines between points (like pitch and volume modes)
             if len(times) >= 2:
                 self.ax.plot(times, reductions, color='orange', linewidth=2, label='Noise Reduction Curve', marker='o', markersize=8)
+    
+    def _draw_blend_view(self):
+        """Draw blend mode with dual waveforms (original + enhanced, Phase 2.7)"""
+        if not self.has_enhancement or self.enhanced_audio_data is None:
+            # Fallback: no enhanced audio, show error message
+            self.ax.text(0.5, 0.5, "Enhanced vocals not available\nCheck 'Improve Vocals' during separation", 
+                        ha='center', va='center', transform=self.ax.transAxes,
+                        fontsize=12, color='red')
+            return
+        
+        self.ax.set_ylabel("Blend Mix (%)")
+        self.ax.set_title("Blend Mode: Original (blue) vs Enhanced (green) - Click to adjust blend curve")
+        self.ax.set_ylim(0, 100)
+        
+        # Downsample for performance
+        hop_length = max(1, len(self.audio_data) // 2000)
+        times = np.arange(0, len(self.audio_data), hop_length) / self.sample_rate
+        
+        # Normalize both waveforms to 0-100% range for visualization
+        original_samples = self.audio_data[::hop_length]
+        enhanced_samples = self.enhanced_audio_data[::hop_length]
+        
+        # Normalize to 0-100 (map [-1, 1] audio range to [0, 100] percentage)
+        original_norm = ((original_samples + 1) / 2) * 100
+        enhanced_norm = ((enhanced_samples + 1) / 2) * 100
+        
+        # Plot original waveform (light blue, semi-transparent)
+        self.ax.fill_between(times, original_norm, alpha=0.3, color='lightblue', label='Original Vocals')
+        
+        # Plot enhanced waveform (light green, semi-transparent, overlaid)
+        self.ax.fill_between(times, enhanced_norm, alpha=0.3, color='lightgreen', label='Enhanced Vocals')
+        
+        # Draw 50% reference line
+        self.ax.axhline(50, color='gray', linestyle='--', linewidth=1, alpha=0.5, label='50% Mix')
+        
+        # Plot blend curve control points
+        if len(self.blend_curve.control_points) > 0:
+            times = [pt.time for pt in self.blend_curve.control_points]
+            enhanced_percents = [pt.enhanced_percent for pt in self.blend_curve.control_points]
+            
+            # Plot control points (yellow for high visibility)
+            self.ax.scatter(times, enhanced_percents, color='gold', s=100, zorder=5, 
+                          edgecolors='black', linewidths=2, label='Blend Points')
+            
+            # Draw blend curve line
+            if len(times) >= 2:
+                self.ax.plot(times, enhanced_percents, color='gold', linewidth=3, 
+                           label='Blend Curve (0%=Original, 100%=Enhanced)', 
+                           marker='o', markersize=10, markeredgecolor='black', markeredgewidth=2)
+        
+        # Add legend for clarity
+        self.ax.legend(loc='upper right', fontsize=8)
     
     def _on_click(self, event):
         """Handle mouse click - add, move, or remove control point based on mode"""
@@ -740,6 +858,11 @@ class SpectrumEditor(ttk.Frame):
             for i, pt in enumerate(self.noise_curve.control_points):
                 if abs(pt.time - time) < threshold_time and abs(pt.reduction_percent - value) < threshold_value:
                     return ("noise", i)
+        elif self.current_mode == "blend":
+            threshold_value = 10.0  # 10% for blend
+            for i, pt in enumerate(self.blend_curve.control_points):
+                if abs(pt.time - time) < threshold_time and abs(pt.enhanced_percent - value) < threshold_value:
+                    return ("blend", i)
         
         return None
     
@@ -761,6 +884,10 @@ class SpectrumEditor(ttk.Frame):
             value = max(0, min(100, value))
             self.noise_curve.control_points.append(NoiseControlPoint(time, value))
             self.noise_curve.control_points.sort(key=lambda pt: pt.time)
+        elif self.current_mode == "blend":
+            value = max(0, min(100, value))
+            self.blend_curve.control_points.append(BlendControlPoint(time, value))
+            self.blend_curve.control_points.sort(key=lambda pt: pt.time)
         
         logger.info(f"Added {self.current_mode} control point at {time:.2f}s, value={value:.2f}")
         self._redraw_spectrum()
@@ -781,14 +908,18 @@ class SpectrumEditor(ttk.Frame):
         elif curve_type == "noise" and point_index < len(self.noise_curve.control_points):
             removed = self.noise_curve.control_points.pop(point_index)
             logger.info(f"Removed noise control point at {removed.time:.2f}s")
+        elif curve_type == "blend" and point_index < len(self.blend_curve.control_points):
+            removed = self.blend_curve.control_points.pop(point_index)
+            logger.info(f"Removed blend control point at {removed.time:.2f}s")
     
     def get_all_curves(self) -> dict:
-        """Return all editing curves for processing"""
+        """Return all editing curves for processing (Phase 2.7: includes blend)"""
         return {
             'pitch': self.pitch_curve,
             'reverb': self.reverb_curve,
             'volume': self.volume_curve,
-            'noise': self.noise_curve
+            'noise': self.noise_curve,
+            'blend': self.blend_curve
         }
     
     def reset_current_curve(self):
@@ -801,16 +932,19 @@ class SpectrumEditor(ttk.Frame):
             self.volume_curve = VolumeCurve()
         elif self.current_mode == "noise":
             self.noise_curve = NoiseCurve()
+        elif self.current_mode == "blend":
+            self.blend_curve = BlendCurve()
         
         logger.info(f"Reset {self.current_mode} curve")
         self._redraw_spectrum()
     
     def reset_all_curves(self):
-        """Reset all curves to defaults"""
+        """Reset all curves to defaults (Phase 2.7: includes blend)"""
         self.pitch_curve = PitchCurve()
         self.reverb_curve = ReverbCurve()
         self.volume_curve = VolumeCurve()
         self.noise_curve = NoiseCurve()
+        self.blend_curve = BlendCurve()
         
         logger.info("Reset all curves")
         self._redraw_spectrum()

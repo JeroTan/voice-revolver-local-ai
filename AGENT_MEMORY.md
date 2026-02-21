@@ -31,6 +31,10 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ### Tech Stack
 - **Language:** Python 3.11.x (REQUIRED)
+  - **CRITICAL:** All AI tools (Demucs, RVC, MDX, Resemble Enhance) use Python 3.11
+  - Python 3.14 lacks CUDA-enabled PyTorch builds (CPU-only as of Feb 2026)
+  - Always create virtual environments with Python 3.11 for AI/ML features
+  - Main venvs: `.venv-1` (app), `venv-rvc` (RVC), `venv-mdx` (MDX), `venv-enhance` (Resemble)
 - **UI Framework:** tkinter (native Python)
 - **ML Models:** Demucs, ChatterBox VC (OpenVoice V2 legacy)
 - **Audio:** pydub, FFmpeg (bundled + auto-download), pygame (preview)
@@ -50,6 +54,44 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 ---
 
 ## History Log
+
+### 2026-02-21 | Python Environment Standard
+- **Topic:** Virtual environment Python version standardization
+- **Discovery:** All AI/ML tools require Python 3.11.x for CUDA support
+- **Key Findings:**
+  - **venv-mdx** (Python 3.11.9): PyTorch 2.1.2+cu118 ✅ CUDA working
+  - **venv-rvc** (Python 3.11.9): PyTorch 2.10.0+cpu ❌ CPU only (needs reinstall)
+  - **.venv-1** (Python 3.14.0): No torch, main app
+  - **venv-enhance** (Python 3.11.9): ✅ CUDA working - PyTorch 2.1.1+cu118, DeepSpeed 0.16.5
+- **Issue:** Python 3.14.0 only has CPU-only PyTorch builds (no CUDA as of Feb 2026)
+- **Decision:** Always use Python 3.11.x for AI/ML virtual environments
+- **Action:** Deleted venv-enhance (Python 3.14) and recreated with Python 3.11.9
+- **STANDARD:** When creating any AI/ML venv, always specify Python 3.11:
+  ```powershell
+  C:\Users\jerow\AppData\Local\Programs\Python\Python311\python.exe -m venv venv-name
+  ```
+
+### 2026-02-21 | DeepSpeed Windows Installation
+- **Topic:** Successfully installed DeepSpeed on Windows for Resemble Enhance
+- **Challenge:** resemble-enhance requires deepspeed==0.12.4, but it won't build on Windows
+- **Solution:** Install latest DeepSpeed (0.16.5+) with prebuilt Windows wheels
+- **Key Commands:**
+  ```powershell
+  # Install PyTorch with CUDA first
+  pip install torch==2.1.1 torchaudio==2.1.1 --index-url https://download.pytorch.org/whl/cu118
+  
+  # Install DeepSpeed using ONLY prebuilt wheels (no source build)
+  pip install deepspeed --only-binary=:all:
+  
+  # This installs DeepSpeed 0.16.5 (latest Windows-compatible version)
+  ```
+- **Critical Findings:**
+  - DeepSpeed 0.14.5+ has native Windows support with prebuilt operators
+  - Windows does NOT support: async I/O (AIO), GDS (warnings are normal)
+  - Must use `--only-binary=:all:` to avoid source build attempts
+  - Version mismatch (0.16.5 vs 0.12.4) is acceptable for inference-only use
+- **Resources:** [DeepSpeed Windows Blog](https://github.com/deepspeedai/DeepSpeed/blob/master/blogs/windows/08-2024/README.md)
+- **Result:** ✅ venv-enhance fully operational with GPU/CUDA support
 
 ### 2026-02-21 | CRITICAL LESSON: Listen Carefully & Avoid Regressions
 - **Topic:** Agent behavior correction - careful listening required

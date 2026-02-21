@@ -1,4 +1,6 @@
+# ===========================
 # Python
+# ===========================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -16,47 +18,190 @@ parts/
 sdist/
 var/
 wheels/
+pip-wheel-metadata/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
+*.manifest
+*.spec
 
-# Virtual environments
+# ===========================
+# Virtual Environments
+# ===========================
 venv/
 env/
 ENV/
-.venv*
+.venv/
+.venv-*/
+venv-*/
+env.bak/
+venv.bak/
 
-# IDE
+# Project-specific virtual environments
+applio_temp/
+venv-rvc/
+venv-mdx/
+venv-enhance/
+
+# ===========================
+# IDE & Editors
+# ===========================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
 
-# Build artifacts
+# ===========================
+# Build Artifacts
+# ===========================
 dist/
+build/
 build/windows/temp/
 build/mac/temp/
 *.spec.cache
+*.exe
+*.msi
+*.dmg
+*.pkg
 
-# Logs
+# ===========================
+# Logs & Debugging
+# ===========================
 *.log
 logs/
+*.out
+*.err
+debug.log
+error.log
 
-# Models (large files, should be downloaded)
+# ===========================
+# AI/ML Models & Weights
+# ===========================
+# Large model files - should be downloaded separately
 models/
 *.pth
 *.pt
+*.ckpt
+*.safetensors
+*.bin
+*.h5
+*.pkl
+*.pickle
+*.onnx
+checkpoints/
+pretrained/
+weights/
 
-# Temp files
+# ===========================
+# Audio Files (Processed/Temp)
+# ===========================
+# Keep example files, ignore processed outputs
+*.wav
+!example*.wav
+!sample*.wav
+vocals_*.wav
+instrumental_*.wav
+*_separated.wav
+*_converted.wav
+*_preview.wav
+*_enhanced.wav
+*_processed.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.aac
+separation/
+preview/
+
+# ===========================
+# Application Data & Cache
+# ===========================
+app_data/
+cache/
+.cache/
 temp/
 tmp/
 *.tmp
+*.temp
+*.cache
 
-# Environment
+# ===========================
+# Test Files
+# ===========================
+test_*.py
+*_test.py
+tests/__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# ===========================
+# Environment & Secrets
+# ===========================
 .env
 .env.local
+.env.*.local
+*.env
+secrets.json
+config.local.json
 
-applio_temp/
-venv-rvc/
+# ===========================
+# OS-Specific
+# ===========================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.nfs*
+
+# ===========================
+# Project-Specific
+# ===========================
+# DeepSpeed temporary files
+.deepspeed_env
+.deepspeed_inference_config
+
+# PyTorch temporary files
+.torch/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# User-uploaded audio files
+uploads/
+input/
+output/
+
+# Backup files
+*.bak
+*.backup
+*~backup
+
+# Compiled documentation
+docs/_build/
+site/

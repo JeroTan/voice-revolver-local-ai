@@ -52,9 +52,10 @@ python run.py
 
 - Python 3.11.x (recommended)
 - Virtual environments: 
-  - `.venv` (main application)
+  - `.venv-1` (main application)
   - `venv-rvc` (RVC model support - required)
   - `venv-mdx` (MDX stem separation - optional for best vocal isolation)
+  - `venv-enhance` (Resemble Enhance - optional for AI vocal enhancement, **run `setup_venv_enhance.bat` to install**)
 - **For GPU acceleration (NVIDIA GPUs)**:
   - CUDA Toolkit 11.8: [Download](https://developer.nvidia.com/cuda-11-8-0-download-archive)
   - After `pip install -r requirements.txt`, run:
@@ -65,6 +66,7 @@ python run.py
   - Speed improvements: ~10-20x faster (Demucs: 2-5min → 15-30sec, MDX: 30min → 2min)
 - See `requirements.txt` for full dependencies
 - See **[AGENT_MEMORY.md](AGENT_MEMORY.md)** for detailed GPU setup troubleshooting
+- See **[venv-enhance Setup Guide](docs/venv-enhance-setup.md)** for Resemble Enhance installation
 
 ## License
 
