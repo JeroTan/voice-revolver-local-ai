@@ -40,7 +40,9 @@ from voice_revolver_core.infrastructure.audio_mixer import AudioMixer
 from voice_revolver_core.infrastructure.format_converter import FormatConverter
 from voice_revolver_core.domain.file_manager import FileManager
 from voice_revolver_core.domain.progress_tracker import ProgressTracker
-from voice_revolver_core.domain.base import VoiceConversionParams
+from voice_revolver_core.domain.base import VoiceConversionParams, AudioStems
+
+logger = logging.getLogger(__name__)
 
 
 class StartupDialog:
@@ -308,14 +310,11 @@ class VoiceRevolverApp:
         self.root = root
         self.root.title("Voice Revolver AI - Local Voice Replacement")
         
-        # Set window size and position at top-left with margin
-        window_width = 950
-        window_height = 1100  # Increased for threshold controls
-        margin = 20
-        self.root.geometry(f"{window_width}x{window_height}+{margin}+{margin}")
+        # Maximize window for Phase 2 two-column layout
+        self.root.state('zoomed')  # Windows maximized
         
-        # Make window resizable
-        self.root.minsize(850, 750)  # Increased minimum height
+        # Set minimum size for two-column layout
+        self.root.minsize(1200, 700)  # Wide enough for left + right columns
         
         # Configuration
         self.device = device
@@ -326,6 +325,7 @@ class VoiceRevolverApp:
         self.reference_file = None
         self.output_file = None
         self.processing = False
+        self.separation_complete = False  # Phase 2: Track if vocal separation is complete
         
         # Reference mode: 'audio' or 'model' (RVC zip)
         self.reference_mode = tk.StringVar(value="audio")
@@ -372,10 +372,13 @@ class VoiceRevolverApp:
             except Exception as e:
                 self.log(f"Warning: Could not initialize audio player: {e}")
         self.processing_thread = None
+        self.separation_thread = None  # Phase 2: Separation background thread
         
         # Build UI first (so log() method works)
         self._build_ui()
-        self._create_log_window()  # Create separate log window
+        self._create_log_window()  # Create separate log window (hidden by default)
+        self.log_window.withdraw()  # Start hidden - toggle with F12
+        self.log_hidden = True
         
         # Initialize services
         self.log("Initializing Voice Revolver AI...")
@@ -410,7 +413,10 @@ class VoiceRevolverApp:
         # View menu
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="View", menu=view_menu)
-        view_menu.add_command(label="Show Logs", command=self._show_log_window)
+        view_menu.add_command(label="Show/Hide Logs (F12)", command=self._toggle_log_window)
+        
+        # Keyboard shortcuts
+        self.root.bind('<F12>', lambda e: self._toggle_log_window())
         
         # Main container with responsive grid
         main_frame = ttk.Frame(self.root, padding="10")
@@ -418,266 +424,267 @@ class VoiceRevolverApp:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         
-        # Configure main_frame grid weights for responsive layout
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(3, weight=1)  # Preview section expands
+        # Phase 2: Two-column layout
+        # Column 0: Controls (left, 40%)
+        # Column 1: Spectrum Editor + Previews (right, 60%)
+        main_frame.columnconfigure(0, weight=2, minsize=500)  # Left column
+        main_frame.columnconfigure(1, weight=3, minsize=700)  # Right column
+        main_frame.rowconfigure(0, weight=1)  # Main content expands
+        main_frame.rowconfigure(1, weight=0)  # Progress bar (fixed height)
         
-        # Title
-        title_label = ttk.Label(main_frame, text="Voice Revolver AI", font=("Arial", 16, "bold"))
-        title_label.grid(row=0, column=0, columnspan=3, pady=(0, 10))
+        # === LEFT COLUMN: Controls ===
+        # Create left container (divided into top and bottom)
+        left_container = ttk.Frame(main_frame)
+        left_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
+        left_container.rowconfigure(0, weight=1)  # Top section
+        left_container.rowconfigure(1, weight=1)  # Bottom section
+        left_container.columnconfigure(0, weight=1)
         
-        # File Selection Section
-        file_frame = ttk.LabelFrame(main_frame, text="Audio Files", padding="10")
-        file_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
+        # === RIGHT COLUMN: Spectrum Editor + Previews ===
+        # Create right container (divided into top and bottom)
+        right_container = ttk.Frame(main_frame)
+        right_container.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0))
+        right_container.rowconfigure(0, weight=2)  # Spectrum editor (60%)
+        right_container.rowconfigure(1, weight=1)  # Preview players (40%)
+        right_container.columnconfigure(0, weight=1)
         
-        # Original file
-        ttk.Label(file_frame, text="Original Song:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.original_label = ttk.Label(file_frame, text="No file selected", foreground="gray")
-        self.original_label.grid(row=0, column=1, sticky=tk.W, padx=5)
-        ttk.Button(file_frame, text="Browse...", command=self._select_original).grid(row=0, column=2, padx=5)
+        # TOP-LEFT: Original Audio & Separation
+        left_top_frame = ttk.LabelFrame(left_container, text="Original Audio & Separation", padding="10")
+        left_top_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 5))
         
-        # Reference file with mode toggle
-        ttk.Label(file_frame, text="Reference Voice:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.reference_label = ttk.Label(file_frame, text="No file selected", foreground="gray")
-        self.reference_label.grid(row=1, column=1, sticky=tk.W, padx=5)
-        ttk.Button(file_frame, text="Browse...", command=self._select_reference).grid(row=1, column=2, padx=5)
+        # BOTTOM-LEFT: Reference & Processing
+        left_bottom_frame = ttk.LabelFrame(left_container, text="Reference Voice & Processing", padding="10")
+        left_bottom_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(5, 0))
         
-        # Reference mode selector (Audio or Model)
-        mode_frame = ttk.Frame(file_frame)
-        mode_frame.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
+        # TOP-RIGHT: Spectrum Editor
+        right_top_frame = ttk.LabelFrame(right_container, text="Vocal Editor (Run Separation First)", padding="10")
+        right_top_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S),  pady=(0, 5))
         
-        ttk.Label(mode_frame, text="Reference Type:", foreground="gray", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(mode_frame, text="Audio File", variable=self.reference_mode, 
-                       value="audio", command=self._on_reference_mode_change).pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(mode_frame, text="RVC Model (.zip)", variable=self.reference_mode, 
-                       value="model", command=self._on_reference_mode_change).pack(side=tk.LEFT, padx=5)
+        # BOTTOM-RIGHT: Preview & Export
+        right_bottom_frame = ttk.LabelFrame(right_container, text="Audio Preview & Export", padding="10")
+        right_bottom_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(5, 0))
         
-        file_frame.columnconfigure(1, weight=1)
+        # ===================================================================
+        # LEFT-TOP: Original Audio Section
+        # ===================================================================
         
-        # Settings Section
-        settings_frame = ttk.LabelFrame(main_frame, text="Settings", padding="10")
-        settings_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        
-        # Output format
-        ttk.Label(settings_frame, text="Output Format:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.format_var = tk.StringVar(value="wav")
-        format_combo = ttk.Combobox(settings_frame, textvariable=self.format_var, 
-                                     values=["wav", "mp3", "flac"], state="readonly", width=10)
-        format_combo.grid(row=0, column=1, sticky=tk.W, padx=5)
-        
-        # Device selection
-        ttk.Label(settings_frame, text="Device:").grid(row=0, column=2, sticky=tk.W, padx=(20, 0), pady=5)
-        self.device_var = tk.StringVar(value="cpu")  # Default, will be updated after detection
-        device_combo = ttk.Combobox(settings_frame, textvariable=self.device_var,
-                                     values=["cpu", "cuda"], state="readonly", width=10)
-        device_combo.grid(row=0, column=3, sticky=tk.W, padx=5)
+        # Original file selection
+        file_row = 0
+        ttk.Label(left_top_frame, text="Original Song:").grid(row=file_row, column=0, sticky=tk.W, pady=5)
+        self.original_label = ttk.Label(left_top_frame, text="No file selected", foreground="gray")
+        self.original_label.grid(row=file_row, column=1, sticky=(tk.W, tk.E), padx=5)
+        ttk.Button(left_top_frame, text="Browse...", command=self._select_original).grid(row=file_row, column=2, padx=5)
+        left_top_frame.columnconfigure(1, weight=1)
         
         # Separation model selection
-        ttk.Label(settings_frame, text="Separation Model:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        separation_model_combo = ttk.Combobox(settings_frame, textvariable=self.separation_model_var,
+        file_row += 1
+        ttk.Label(left_top_frame, text="Separation Model:").grid(row=file_row, column=0, sticky=tk.W, pady=5)
+        separation_model_combo = ttk.Combobox(left_top_frame, textvariable=self.separation_model_var,
                                               values=["demucs", "mdx"], state="readonly", width=15)
-        separation_model_combo.grid(row=1, column=1, sticky=tk.W, padx=5)
-        ttk.Label(settings_frame, text="Demucs=Balanced | MDX=Best Vocals", 
-                 foreground="gray", font=("Segoe UI", 8)).grid(
-            row=1, column=2, columnspan=2, sticky=tk.W, padx=5)
+        separation_model_combo.grid(row=file_row, column=1, sticky=tk.W, padx=5)
+        ttk.Label(left_top_frame, text="MDX=Best", foreground="gray", font=("Segoe UI", 8)).grid(
+            row=file_row, column=2, sticky=tk.W)
+        
+        # Device selection
+        file_row += 1
+        ttk.Label(left_top_frame, text="Device:").grid(row=file_row, column=0, sticky=tk.W, pady=5)
+        self.device_var = tk.StringVar(value="cpu")  # Default, will be updated
+        device_combo = ttk.Combobox(left_top_frame, textvariable=self.device_var,
+                                     values=["cpu", "cuda"], state="readonly", width=15)
+        device_combo.grid(row=file_row, column=1, sticky=tk.W, padx=5)
         
         # Pitch adjustment
-        ttk.Label(settings_frame, text="Pitch Shift:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        file_row += 1
+        ttk.Label(left_top_frame, text="Pitch Shift:").grid(row=file_row, column=0, sticky=tk.W, pady=5)
         self.pitch_var = tk.IntVar(value=0)
-        pitch_scale = ttk.Scale(settings_frame, from_=-12, to=12, variable=self.pitch_var, 
+        pitch_scale = ttk.Scale(left_top_frame, from_=-12, to=12, variable=self.pitch_var, 
                                 orient=tk.HORIZONTAL, length=150)
-        pitch_scale.grid(row=2, column=1, sticky=tk.W, padx=5)
-        self.pitch_label = ttk.Label(settings_frame, text="0 semitones")
-        self.pitch_label.grid(row=2, column=2, columnspan=2, sticky=tk.W, padx=5)
+        pitch_scale.grid(row=file_row, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.pitch_label = ttk.Label(left_top_frame, text="0 semitones")
+        self.pitch_label.grid(row=file_row, column=2, sticky=tk.W, padx=5)
         pitch_scale.config(command=lambda v: self.pitch_label.config(text=f"{int(float(v))} semitones"))
         
-        # Gender alignment checkbox (works for both audio and RVC modes)
-        self.use_gender_alignment_var = tk.BooleanVar(value=False)  # OFF by default
-        gender_alignment_check = ttk.Checkbutton(settings_frame, text="Use Gender Alignment", 
+        # Gender alignment checkbox
+        file_row += 1
+        self.use_gender_alignment_var = tk.BooleanVar(value=False)
+        gender_alignment_check = ttk.Checkbutton(left_top_frame, text="Use Gender Alignment", 
                                               variable=self.use_gender_alignment_var,
                                               command=self._on_gender_alignment_change)
-        gender_alignment_check.grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=5)
-        ttk.Label(settings_frame, text="Smart pitch per note + smooth transitions", 
-                 foreground="gray", font=("Segoe UI", 8)).grid(
-            row=3, column=2, columnspan=2, sticky=tk.W, padx=5)
+        gender_alignment_check.grid(row=file_row, column=0, columnspan=3, sticky=tk.W, pady=5)
         
-        # Gender detection results (hidden until processing)
-        self.gender_info_label = ttk.Label(settings_frame, text="", foreground="blue")
-        self.gender_info_label.grid(row=4, column=0, columnspan=4, sticky=tk.W, pady=2)
+        # Vocal Match selection (Phase 2: Target gender to match the original vocal to)
+        file_row += 1
+        self.orig_gender_frame = ttk.Frame(left_top_frame)
+        self.orig_gender_frame.grid(row=file_row, column=0, columnspan=3, sticky=tk.W, pady=5)
+        self.orig_gender_frame.grid_remove()  # Hidden initially
         
-        # Manual Gender Selection for RVC Model Mode (only visible when gender alignment is enabled)
-        self.model_gender_frame = ttk.LabelFrame(settings_frame, text="Manual Gender Selection", padding=10)
-        self.model_gender_frame.grid(row=5, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=10)
-        self.model_gender_frame.grid_remove()  # Hidden by default
-        
-        # Two-column layout: Gender controls on left, Threshold controls on right
-        content_frame = ttk.Frame(self.model_gender_frame)
-        content_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Left column: Gender selection
-        gender_column = ttk.Frame(content_frame)
-        gender_column.grid(row=0, column=0, sticky=(tk.W, tk.N), padx=(0, 20))
-        
-        # Original voice gender
-        original_frame = ttk.Frame(gender_column)
-        original_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(original_frame, text="Original voice is:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(original_frame, text="Male", variable=self.original_gender_var, 
+        ttk.Label(self.orig_gender_frame, text="Vocal Match:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(self.orig_gender_frame, text="Male", variable=self.original_gender_var, 
                        value="male").pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(original_frame, text="Female", variable=self.original_gender_var, 
+        ttk.Radiobutton(self.orig_gender_frame, text="Female", variable=self.original_gender_var, 
                        value="female").pack(side=tk.LEFT, padx=5)
+        ttk.Label(self.orig_gender_frame, text="(Will match audio to selected type after separation)", 
+                 foreground="gray", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=10)
         
-        # Model voice gender
-        model_frame = ttk.Frame(gender_column)
-        model_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(model_frame, text="RVC model voice is:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(model_frame, text="Male", variable=self.model_gender_var, 
-                       value="male").pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(model_frame, text="Female", variable=self.model_gender_var, 
-                       value="female").pack(side=tk.LEFT, padx=5)
+        # Threshold controls (shown if gender alignment enabled)
+        file_row += 1
+        self.threshold_frame = ttk.LabelFrame(left_top_frame, text="Shift Sensitivity (Hz)", padding=5)
+        self.threshold_frame.grid(row=file_row, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        self.threshold_frame.grid_remove()  # Hidden initially
         
-        # Right column: Pitch Shift Threshold Controls (sensitivity)
-        threshold_column = ttk.Frame(content_frame)
-        threshold_column.grid(row=0, column=1, sticky=(tk.W, tk.N))
-        
-        ttk.Label(threshold_column, text="Shift Sensitivity (Hz):", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(threshold_column, text="Lower values = more aggressive shift | Higher = subtle", 
-                 foreground="gray", font=("Segoe UI", 8)).pack(anchor=tk.W, pady=(0, 2))
-        ttk.Label(threshold_column, text="If output sounds too similar, LOWER these values", 
-                 foreground="blue", font=("Segoe UI", 8, "italic")).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(self.threshold_frame, text="Lower = more shift | Higher = subtle", 
+                 foreground="gray", font=("Segoe UI", 8)).grid(row=0, column=0, columnspan=4, sticky=tk.W, pady=2)
         
         # Low Threshold
-        low_frame = ttk.Frame(threshold_column)
-        low_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(low_frame, text="Low:", width=5).pack(side=tk.LEFT)
-        low_slider = ttk.Scale(low_frame, from_=100, to=250, variable=self.threshold_low_var,
-                              orient=tk.HORIZONTAL, length=100, command=self._on_threshold_low_change)
-        low_slider.pack(side=tk.LEFT, padx=5)
-        self.threshold_low_entry = ttk.Entry(low_frame, width=5)
+        ttk.Label(self.threshold_frame, text="Low:", width=5).grid(row=1, column=0, sticky=tk.W)
+        ttk.Scale(self.threshold_frame, from_=100, to=250, variable=self.threshold_low_var,
+                 orient=tk.HORIZONTAL, length=80, command=self._on_threshold_low_change).grid(row=1, column=1, padx=2)
+        self.threshold_low_entry = ttk.Entry(self.threshold_frame, width=5)
         self.threshold_low_entry.insert(0, "180")
-        self.threshold_low_entry.pack(side=tk.LEFT, padx=2)
+        self.threshold_low_entry.grid(row=1, column=2, padx=2)
         self.threshold_low_entry.bind('<Return>', self._on_threshold_low_entry)
-        self.threshold_low_entry.bind('<FocusOut>', self._on_threshold_low_entry)
-        ttk.Button(low_frame, text="↺", width=3, command=lambda: self._reset_threshold('low')).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.threshold_frame, text="↺", width=2, command=lambda: self._reset_threshold('low')).grid(row=1, column=3, padx=2)
         
         # Mid Threshold
-        mid_frame = ttk.Frame(threshold_column)
-        mid_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(mid_frame, text="Mid:", width=5).pack(side=tk.LEFT)
-        mid_slider = ttk.Scale(mid_frame, from_=150, to=300, variable=self.threshold_mid_var,
-                              orient=tk.HORIZONTAL, length=100, command=self._on_threshold_mid_change)
-        mid_slider.pack(side=tk.LEFT, padx=5)
-        self.threshold_mid_entry = ttk.Entry(mid_frame, width=5)
+        ttk.Label(self.threshold_frame, text="Mid:", width=5).grid(row=2, column=0, sticky=tk.W)
+        ttk.Scale(self.threshold_frame, from_=150, to=300, variable=self.threshold_mid_var,
+                 orient=tk.HORIZONTAL, length=80, command=self._on_threshold_mid_change).grid(row=2, column=1, padx=2)
+        self.threshold_mid_entry = ttk.Entry(self.threshold_frame, width=5)
         self.threshold_mid_entry.insert(0, "230")
-        self.threshold_mid_entry.pack(side=tk.LEFT, padx=2)
+        self.threshold_mid_entry.grid(row=2, column=2, padx=2)
         self.threshold_mid_entry.bind('<Return>', self._on_threshold_mid_entry)
-        self.threshold_mid_entry.bind('<FocusOut>', self._on_threshold_mid_entry)
-        ttk.Button(mid_frame, text="↺", width=3, command=lambda: self._reset_threshold('mid')).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.threshold_frame, text="↺", width=2, command=lambda: self._reset_threshold('mid')).grid(row=2, column=3, padx=2)
         
         # High Threshold
-        high_frame = ttk.Frame(threshold_column)
-        high_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(high_frame, text="High:", width=5).pack(side=tk.LEFT)
-        high_slider = ttk.Scale(high_frame, from_=200, to=350, variable=self.threshold_high_var,
-                              orient=tk.HORIZONTAL, length=100, command=self._on_threshold_high_change)
-        high_slider.pack(side=tk.LEFT, padx=5)
-        self.threshold_high_entry = ttk.Entry(high_frame, width=5)
+        ttk.Label(self.threshold_frame, text="High:", width=5).grid(row=3, column=0, sticky=tk.W)
+        ttk.Scale(self.threshold_frame, from_=200, to=350, variable=self.threshold_high_var,
+                 orient=tk.HORIZONTAL, length=80, command=self._on_threshold_high_change).grid(row=3, column=1, padx=2)
+        self.threshold_high_entry = ttk.Entry(self.threshold_frame, width=5)
         self.threshold_high_entry.insert(0, "280")
-        self.threshold_high_entry.pack(side=tk.LEFT, padx=2)
+        self.threshold_high_entry.grid(row=3, column=2, padx=2)
         self.threshold_high_entry.bind('<Return>', self._on_threshold_high_entry)
-        self.threshold_high_entry.bind('<FocusOut>', self._on_threshold_high_entry)
-        ttk.Button(high_frame, text="↺", width=3, command=lambda: self._reset_threshold('high')).pack(side=tk.LEFT, padx=2)
+        ttk.Button(self.threshold_frame, text="↺", width=2, command=lambda: self._reset_threshold('high')).grid(row=3, column=3, padx=2)
         
-        # =================================================================
-        # OpenVoice-Specific Controls (Disabled for ChatterBox)
-        # These controls are only used with OpenVoice wrapper
-        # ChatterBox VC has simpler API without style/conversion strength
-        # Uncomment if switching back to OpenVoice
-        # =================================================================
+        # Run Separation button (NEW - Phase 2)
+        file_row += 1
+        self.separation_btn = ttk.Button(left_top_frame, text="Run Separation", 
+                                        command=self._run_separation, state="disabled")
+        self.separation_btn.grid(row=file_row, column=0, columnspan=3, pady=10)
         
-        # # Voice style (OpenVoice only)
-        # ttk.Label(settings_frame, text="Voice Style:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        # self.style_var = tk.StringVar(value="default")
-        # style_combo = ttk.Combobox(settings_frame, textvariable=self.style_var,
-        #                             values=["default", "american", "british", "australian", "indian"],
-        #                             state="readonly", width=15)
-        # style_combo.grid(row=2, column=1, sticky=tk.W, padx=5)
-        # ttk.Label(settings_frame, text="Accent variant to apply", foreground="gray").grid(
-        #     row=2, column=2, columnspan=2, sticky=tk.W, padx=5)
+        # ===================================================================
+        # LEFT-BOTTOM: Reference & Processing Section
+        # ===================================================================
         
-        # # Voice conversion strength / tau (OpenVoice only)
-        # tau_frame = ttk.Frame(settings_frame)
-        # tau_frame.grid(row=3, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
+        ref_row = 0
+        # Reference file selection
+        ttk.Label(left_bottom_frame, text="Reference Voice:").grid(row=ref_row, column=0, sticky=tk.W, pady=5)
+        self.reference_label = ttk.Label(left_bottom_frame, text="No file selected", foreground="gray")
+        self.reference_label.grid(row=ref_row, column=1, sticky=(tk.W, tk.E), padx=5)
+        self.reference_browse_btn = ttk.Button(left_bottom_frame, text="Browse...", command=self._select_reference, state="disabled")
+        self.reference_browse_btn.grid(row=ref_row, column=2, padx=5)
+        left_bottom_frame.columnconfigure(1, weight=1)
         
-        # ttk.Label(tau_frame, text="Conversion Strength:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
-        # ttk.Label(tau_frame, text="Close to original", foreground="gray", font=("Segoe UI", 8)).grid(
-        #     row=0, column=1, sticky=tk.E, padx=5)
+        # Reference mode selector
+        ref_row += 1
+        mode_frame = ttk.Frame(left_bottom_frame)
+        mode_frame.grid(row=ref_row, column=0, columnspan=3, sticky=tk.W, pady=5)
+        ttk.Label(mode_frame, text="Reference Type:", foreground="gray", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 10))
+        self.ref_audio_radio = ttk.Radiobutton(mode_frame, text="Audio File", variable=self.reference_mode, 
+                       value="audio", command=self._on_reference_mode_change, state="disabled")
+        self.ref_audio_radio.pack(side=tk.LEFT, padx=5)
+        self.ref_model_radio = ttk.Radiobutton(mode_frame, text="RVC Model (.zip)", variable=self.reference_mode, 
+                       value="model", command=self._on_reference_mode_change, state="disabled")
+        self.ref_model_radio.pack(side=tk.LEFT, padx=5)
         
-        # self.tau_var = tk.DoubleVar(value=0.3)
-        # tau_scale = ttk.Scale(tau_frame, from_=0.0, to=1.0, variable=self.tau_var,
-        #                      orient=tk.HORIZONTAL, length=150, command=self._on_tau_change)
-        # tau_scale.grid(row=0, column=2, sticky=tk.W, padx=5)
-        
-        # ttk.Label(tau_frame, text="Close to reference", foreground="gray", font=("Segoe UI", 8)).grid(
-        #     row=0, column=3, sticky=tk.W, padx=5)
-        
-        # # Precise tau input
-        # self.tau_entry = ttk.Entry(tau_frame, width=6)
-        # self.tau_entry.insert(0, "0.30")
-        # self.tau_entry.grid(row=0, column=4, sticky=tk.W, padx=5)
-        # self.tau_entry.bind('<Return>', self._on_tau_entry_change)
-        # self.tau_entry.bind('<FocusOut>', self._on_tau_entry_change)
-        
-        # # Reset button
-        # reset_btn = ttk.Button(tau_frame, text="↺", width=3, command=self._reset_tau)
-        # reset_btn.grid(row=0, column=5, sticky=tk.W, padx=(0, 5))
-        
-        # =================================================================
-        # End OpenVoice-Specific Controls
-        # =================================================================
+        # Output format
+        ref_row += 1
+        ttk.Label(left_bottom_frame, text="Output Format:").grid(row=ref_row, column=0, sticky=tk.W, pady=5)
+        self.format_var = tk.StringVar(value="wav")
+        self.format_combo = ttk.Combobox(left_bottom_frame, textvariable=self.format_var, 
+                                     values=["wav", "mp3", "flac"], state="disabled", width=15)
+        self.format_combo.grid(row=ref_row, column=1, sticky=tk.W, padx=5)
         
         # Use vocal only checkbox
+        ref_row += 1
         self.vocal_only_var = tk.BooleanVar(value=True)
-        vocal_only_check = ttk.Checkbutton(settings_frame, text="Use Vocal Only", 
-                                           variable=self.vocal_only_var)
-        vocal_only_check.grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=5)
-        ttk.Label(settings_frame, text="Use the separated vocal instead of the whole song", 
-                 foreground="gray", font=("Segoe UI", 8)).grid(
-            row=6, column=2, columnspan=2, sticky=tk.W, padx=5)
-        preview_frame = ttk.LabelFrame(main_frame, text="Preview & Export", padding="10")
-        preview_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        self.vocal_only_check = ttk.Checkbutton(left_bottom_frame, text="Use Original Vocal Only", 
+                                           variable=self.vocal_only_var, state="disabled")
+        self.vocal_only_check.grid(row=ref_row, column=0, columnspan=3, sticky=tk.W, pady=5)
         
-        # Volume control at the top
-        volume_frame = ttk.Frame(preview_frame)
-        volume_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        # Processing buttons
+        ref_row += 1
+        button_container = ttk.Frame(left_bottom_frame)
+        button_container.grid(row=ref_row, column=0, columnspan=3, pady=15)
         
-        ttk.Label(volume_frame, text="Volume:", font=("Arial", 9)).grid(row=0, column=0, padx=(0, 5))
+        self.start_btn = ttk.Button(button_container, text="Start Processing", command=self._start_processing, 
+                                     state="disabled")
+        self.start_btn.grid(row=0, column=0, padx=5)
         
-        self.volume_var = tk.DoubleVar(value=0.7)  # Default 70%
-        volume_slider = ttk.Scale(volume_frame, from_=0, to=1, variable=self.volume_var,
-                                 orient=tk.HORIZONTAL, length=150, command=self._on_volume_change)
-        volume_slider.grid(row=0, column=1, padx=5)
+        self.export_btn = ttk.Button(button_container, text="Export Result", command=self._export_result, 
+                                      state="disabled")
+        self.export_btn.grid(row=0, column=1, padx=5)
         
-        self.volume_label = ttk.Label(volume_frame, text="70%", width=5)
-        self.volume_label.grid(row=0, column=2, padx=5)
+        self.cancel_btn = ttk.Button(button_container, text="Cancel", command=self._cancel_processing, 
+                                      state="disabled")
+        self.cancel_btn.grid(row=0, column=2, padx=5)
+        
+        # ===================================================================
+        # RIGHT-TOP: Spectrum Editor
+        # ===================================================================
+        
+        # Import spectrum editor
+        from voice_revolver_ui.spectrum_editor import SpectrumEditor
+        
+        self.spectrum_editor = SpectrumEditor(right_top_frame)
+        self.spectrum_editor.pack(fill=tk.BOTH, expand=True)
+        
+        # Set callback for Apply Changes button
+        self.spectrum_editor.set_apply_changes_callback(self._apply_curve_changes)
+        
+        # Initially disable spectrum editor (enable after separation)
+        self.separation_complete = False
+        self._enable_spectrum_editor(False)
+        
+        # ===================================================================
+        # RIGHT-BOTTOM: Preview & Export
+        # ===================================================================
+        
+        # Volume slider on the right side (vertical) - PACK FIRST!
+        volume_container = ttk.Frame(right_bottom_frame)
+        volume_container.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
+        
+        ttk.Label(volume_container, text="Vol", font=("Arial", 8)).pack(pady=(0, 5))
+        
+        self.preview_volume_var = tk.DoubleVar(value=100)
+        volume_slider = ttk.Scale(volume_container, from_=100, to=0, variable=self.preview_volume_var,
+                                 orient=tk.VERTICAL, length=120, command=self._on_preview_volume_change)
+        volume_slider.pack()
+        
+        volume_label = ttk.Label(volume_container, text="100%", font=("Arial", 8))
+        volume_label.pack(pady=(5, 0))
+        self.preview_volume_label = volume_label
+        
+        # Preview players container - PACK SECOND (fills remaining space)
+        preview_container = ttk.Frame(right_bottom_frame)
+        preview_container.pack(fill=tk.BOTH, expand=True)
         
         self.preview_controls = {}
         preview_configs = [
-            ('original', 'Original Audio', 0),
-            ('original_vocals', 'Original Vocal Only', 1),
-            ('reference_denoised', 'Reference Voice (Cleaned)', 2),
-            ('vocals', 'Vocal That Reference Only', 3),
-            ('final', 'Final Remix', 4),
-            ('instrumental', 'Instrumental', 5)
+            ('original', 'Original Audio'),
+            ('original_vocals', 'Original Vocals'),
+            ('reference_denoised', 'Reference (Cleaned)'),
+            ('vocals', 'Converted Vocals'),
+            ('final', 'Final Mix'),
+            ('instrumental', 'Instrumental')
         ]
         
-        for track_id, track_name, row in preview_configs:
-            # Track frame (offset row by 1 because volume control is at row 0)
-            track_frame = ttk.Frame(preview_frame)
-            track_frame.grid(row=row+1, column=0, sticky=(tk.W, tk.E), pady=5)
+        for idx, (track_id, track_name) in enumerate(preview_configs):
+            # Track frame
+            track_frame = ttk.Frame(preview_container)
+            track_frame.grid(row=idx, column=0, sticky=(tk.W, tk.E), pady=3)
             
             # Track name label
-            ttk.Label(track_frame, text=track_name, font=("Arial", 9, "bold"), width=30).grid(row=0, column=0, sticky=tk.W)
+            ttk.Label(track_frame, text=track_name, font=("Arial", 9), width=18).grid(row=0, column=0, sticky=tk.W)
             
             # Play/Pause button
             play_btn = ttk.Button(track_frame, text="▶", width=3, 
@@ -690,18 +697,18 @@ class VoiceRevolverApp:
             stop_btn.grid(row=0, column=2, padx=2)
             
             # Time label
-            time_label = ttk.Label(track_frame, text="00:00/00:00", width=12)
+            time_label = ttk.Label(track_frame, text="00:00/00:00", width=10)
             time_label.grid(row=0, column=3, padx=5)
             
             # Timeline slider
             timeline_var = tk.DoubleVar(value=0)
             timeline = ttk.Scale(track_frame, from_=0, to=100, variable=timeline_var,
-                                orient=tk.HORIZONTAL, length=200, command=lambda v, t=track_id: self._on_seek(t, v))
+                                orient=tk.HORIZONTAL, length=150, command=lambda v, t=track_id: self._on_seek(t, v))
             timeline.grid(row=0, column=4, sticky=(tk.W, tk.E), padx=5)
             timeline.config(state="disabled")
             
             # Export button
-            export_btn = ttk.Button(track_frame, text="Export", width=8,
+            export_btn = ttk.Button(track_frame, text="↓", width=3,
                                    command=lambda t=track_id: self._export_track(t), state="disabled")
             export_btn.grid(row=0, column=5, padx=2)
             
@@ -717,38 +724,426 @@ class VoiceRevolverApp:
                 'export_btn': export_btn
             }
         
-        preview_frame.columnconfigure(0, weight=1)
+        preview_container.columnconfigure(0, weight=1)
         
-        # Buttons Section - sticks to bottom
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=4, column=0, columnspan=3, sticky=tk.S, pady=10)
+        # ===================================================================
+        # PROGRESS BAR (spans both columns)
+        # ===================================================================
         
-        self.start_btn = ttk.Button(button_frame, text="Start Processing", command=self._start_processing, 
-                                     state="disabled")
-        self.start_btn.grid(row=0, column=0, padx=5)
+        progress_frame = ttk.Frame(main_frame)
+        progress_frame.grid(row=1, column=0,  columnspan=2, sticky=(tk.W, tk.E), pady=5)
         
-        self.export_btn = ttk.Button(button_frame, text="Export Result", command=self._export_result, 
-                                      state="disabled")
-        self.export_btn.grid(row=0, column=1, padx=5)
-        
-        self.cancel_btn = ttk.Button(button_frame, text="Cancel", command=self._cancel_processing, 
-                                      state="disabled")
-        self.cancel_btn.grid(row=0, column=2, padx=5)
-        
-        # Progress Section (moved below buttons)
-        progress_frame = ttk.LabelFrame(main_frame, text="Progress", padding="10")
-        progress_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        
-        self.progress_bar = ttk.Progressbar(progress_frame, mode="determinate", length=400)
-        self.progress_bar.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        self.progress_bar = ttk.Progressbar(progress_frame, mode="determinate", length=800)
+        self.progress_bar.pack(fill=tk.X, expand=True, padx=5, pady=2)
         
         self.status_label = ttk.Label(progress_frame, text="Ready", foreground="green")
-        self.status_label.grid(row=1, column=0, sticky=tk.W)
+        self.status_label.pack(pady=2)
         
         progress_frame.columnconfigure(0, weight=1)
+        
+    # End of _build_ui
+    
+    def _enable_spectrum_editor(self, enable=True):
+        """Enable or disable spectrum editor and update label"""
+        if enable:
+            # Find the label frame and update text
+            for widget in self.spectrum_editor.master.winfo_children():
+                if isinstance(widget, ttk.LabelFrame):
+                    widget.config(text="Vocal Editor (Spectrum)")
+            # Enable spectrum editor widgets
+            self.spectrum_editor.set_enabled(True)
+        else:
+            # Update label
+            for widget in self.spectrum_editor.master.winfo_children():
+                if isinstance(widget, ttk.LabelFrame):
+                    widget.config(text="Vocal Editor (Run Separation First)")
+            # Disable spectrum editor widgets  
+            self.spectrum_editor.set_enabled(False)
+    
+    def _run_separation(self):
+        """Phase 2: Run vocal separation only (not full processing)"""
+        if not self.original_file:
+            messagebox.showwarning("No Audio", "Please select an original audio file first")
+            return
+        
+        if self.processing:
+            return
+        
+        # Disable separation button during processing
+        self.separation_btn.config(state="disabled")
+        self.processing = True
+        
+        # Clear previous separation if re-running
+        self.separation_complete = False
+        self._enable_spectrum_editor(False)
+        
+        self.log("="*50)
+        self.log("Starting vocal separation...")
+        self._update_progress(0, "Initializing...")
+        
+        # Run separation in background thread
+        self.separation_thread = threading.Thread(target=self._separation_worker, daemon=True)
+        self.separation_thread.start()
+    
+    def _separation_worker(self):
+        """Background worker for vocal separation"""
+        try:
+            # Import required components
+            from voice_revolver_core.infrastructure.demucs_wrapper import DemucsWrapper
+            from voice_revolver_core.infrastructure.mdx_wrapper import MDXWrapper
+            from voice_revolver_core.infrastructure.gender_detector import GenderDetector
+            from voice_revolver_core.infrastructure.vocal_enhancer import VocalEnhancer
+            
+            # Progress callback for thread-safe UI updates
+            def progress_cb(percentage, message):
+                self.root.after(0, self._update_progress, percentage, message)
+            
+            # 1. Initialize stem separator based on selected model
+            progress_cb(5, "Loading separation model...")
+            
+            separation_model = self.separation_model_var.get()
+            if separation_model == "mdx":
+                self.log("Using MDX separation (best vocal quality)")
+                separator = MDXWrapper(device=self.device)
+            else:  # demucs
+                self.log("Using Demucs separation (balanced)")
+                separator = DemucsWrapper(device=self.device)
+            
+            # 2. Run separation
+            progress_cb(10, "Separating vocals from song...")
+            self.log(f"Processing: {Path(self.original_file).name}")
+            
+            output_dir = self.file_manager.temp_dir / "separation"
+            output_dir.mkdir(exist_ok=True, parents=True)
+            
+            stems_dict, error = separator.separate(
+                audio_path=Path(self.original_file),
+                output_dir=output_dir
+            )
+            
+            if error:
+                raise RuntimeError(error)
+            
+            # Convert dict to AudioStems
+            stems = AudioStems(
+                vocals=stems_dict.get('vocals'),
+                drums=stems_dict.get('drums'),
+                bass=stems_dict.get('bass'),
+                other=stems_dict.get('other'),
+            )
+            
+            progress_cb(60, "Vocals separated successfully")
+            self.log(f"✓ Vocals extracted: {stems.vocals}")
+            
+            # Store separated vocals path
+            self.original_vocals_path = stems.vocals
+            
+            # Store instrumental stems paths
+            self.instrumental_path = output_dir / "instrumental.wav"
+            if not self.instrumental_path.exists():
+                # Combine non-vocal stems into instrumental using pydub
+                try:
+                    from pydub import AudioSegment
+                    instrumental_stems = stems.get_instrumental()
+                    if instrumental_stems:
+                        # Load first stem
+                        instrumental = None
+                        for stem_name, stem_path in instrumental_stems.items():
+                            if stem_path and stem_path.exists():
+                                stem_audio = AudioSegment.from_file(str(stem_path))
+                                if instrumental is None:
+                                    instrumental = stem_audio
+                                else:
+                                    instrumental = instrumental.overlay(stem_audio)
+                        
+                        if instrumental:
+                            instrumental.export(str(self.instrumental_path), format="wav")
+                            self.log(f"✓ Instrumental created: {self.instrumental_path}")
+                except Exception as e:
+                    self.log(f"⚠ Could not create instrumental: {e}")
+            
+            # 3. Auto-detect gender if gender alignment enabled (for initial curve setup)
+            detected_gender = None
+            initial_pitch_shift = 0.0
+            
+            if self.use_gender_alignment_var.get():
+                progress_cb(70, "Detecting vocal gender...")
+                detector = GenderDetector()
+                detected_gender = detector.detect_gender(stems.vocals)
+                self.log(f"✓ Detected gender: {detected_gender}")
+                
+                # Calculate initial pitch shift based on target gender
+                target_gender = self.original_gender_var.get()  # User's selected target
+                if target_gender and detected_gender != target_gender:
+                    # Male to Female: +12 semitones (up one octave)
+                    # Female to Male: -12 semitones (down one octave)
+                    if detected_gender == "male" and target_gender == "female":
+                        initial_pitch_shift = 12.0
+                        self.log(f"→ Suggested pitch shift: +12 semitones (male → female)")
+                    elif detected_gender == "female" and target_gender == "male":
+                        initial_pitch_shift = -12.0
+                        self.log(f"→ Suggested pitch shift: -12 semitones (female → male)")
+                
+                # Update gender radio button on UI thread
+                self.root.after(0, self.original_gender_var.set, detected_gender)
+            
+            progress_cb(80, "Loading vocals into spectrum editor...")
+            
+            # 4. Load RAW vocals (no enhancement) with pre-populated pitch curve only
+            self.root.after(0, self._separation_complete_callback, 
+                          stems.vocals,  # Use raw vocals, NOT enhanced
+                          detected_gender,
+                          initial_pitch_shift)
+            
+        except Exception as e:
+            error_msg = f"Separation failed: {str(e)}"
+            self.log(f"✗ {error_msg}")
+            self.log(traceback.format_exc())
+            self.root.after(0, self._separation_failed_callback, error_msg)
+    
+    def _separation_complete_callback(self, vocals_path, detected_gender, initial_pitch_shift=0):
+        """UI thread callback when separation completes successfully"""
+        try:
+            # Load vocals into spectrum editor with pre-populated pitch curve only
+            self.spectrum_editor.load_vocals(
+                vocals_path,
+                initial_pitch_shift=initial_pitch_shift
+            )
+            
+            #Set flags
+            self.separation_complete = True
+            self.processing = False
+            
+            # Enable spectrum editor
+            self._enable_spectrum_editor(True)
+            
+            # Enable reference selection panel
+            self.reference_browse_btn.config(state="normal")
+            self.ref_audio_radio.config(state="normal")
+            self.ref_model_radio.config(state="normal")
+            self.format_combo.config(state="readonly")
+            self.vocal_only_check.config(state="normal")
+            
+            # Re-enable separation button (allow re-running)
+            self.separation_btn.config(state="normal")
+            
+            # Update progress
+            self._update_progress(100, "✓ Separation complete - Ready to edit")
+            self.status_label.config(foreground="green")
+            
+            # Log completion
+            if detected_gender:
+                self.log(f"✓ Separation complete! Detected: {detected_gender} vocals")
+                self.log("Adjust gender if detection is incorrect")
+            else:
+                self.log("✓ Separation complete!")
+            
+            # Log pre-populated curve settings
+            if initial_pitch_shift != 0:
+                self.log(f"ℹ Pitch curve pre-set to {initial_pitch_shift:+.1f} semitones (adjust as needed)")
+            
+            self.log("Edit vocal curves in spectrum editor, then select reference and start processing")
+            
+            # Check if ready to start processing
+            self._check_ready()
+            
+        except Exception as e:
+            self.log(f"Error loading vocals into editor: {e}")
+            self._separation_failed_callback(str(e))
+    
+    def _separation_failed_callback(self, error_msg):
+        """UI thread callback when separation fails"""
+        self.separation_complete = False
+        self.processing = False
+        
+        # Re-enable separation button
+        self.separation_btn.config(state="normal" if self.original_file else "disabled")
+        
+        # Update UI
+        self._update_progress(0, f"✗ Separation failed")
+        self.status_label.config(foreground="red")
+        
+        # Show error
+        messagebox.showerror("Separation Failed", error_msg)
+    
+    def _apply_curve_changes(self):
+        """Apply pitch/volume/reverb curve edits to the separated vocals"""
+        if not hasattr(self, 'original_vocals_path') or not self.original_vocals_path:
+            self.log("⚠ No separated vocals available. Run separation first.")
+            return
+        
+        # Get curves from spectrum editor
+        curves = self.spectrum_editor.get_all_curves()
+        
+        # Note: We allow Apply Changes even with 0 points - this reloads original vocals
+        # Useful when user removes all pre-populated points to reset
+        
+        self.log("=" * 50)
+        self.log("Applying curve changes to preview...")
+        
+        has_any_edits = (curves['pitch'].has_edits() or 
+                        curves['reverb'].has_edits() or 
+                        curves['volume'].has_edits())
+        
+        if not has_any_edits:
+            self.log("ℹ No curve edits - reloading original vocals")
+        else:
+            if curves['pitch'].has_edits():
+                self.log(f"• Pitch curve: {len(curves['pitch'].control_points)} points")
+            if curves['reverb'].has_edits():
+                self.log(f"• Reverb curve: {len(curves['reverb'].control_points)} points")
+            if curves['volume'].has_edits():
+                self.log(f"• Volume curve: {len(curves['volume'].control_points)} points")
+        
+        # Disable UI during processing
+        self.spectrum_editor.set_enabled(False)
+        self._update_progress(0, "Applying changes...")
+        
+        # Release audio file handle before processing (prevents permission errors)
+        self.spectrum_editor.release_audio_file()
+        
+        # Run in background thread
+        threading.Thread(target=self._apply_curves_worker, args=(curves,), daemon=False).start()
+    
+    def _apply_curves_worker(self, curves):
+        """Background worker to apply curves"""
+        try:
+            from voice_revolver_core.infrastructure.audio_processor import AudioProcessor
+            
+            # Create temp directory for processed preview
+            preview_dir = self.file_manager.temp_dir / "preview"
+            preview_dir.mkdir(exist_ok=True, parents=True)
+            
+            # Start with original vocals (always use the original, not the preview)
+            current_audio = self.original_vocals_path
+            processor = AudioProcessor()
+            
+            # Clear old preview files
+            for old_file in preview_dir.glob("vocals_*.wav"):
+                try:
+                    old_file.unlink()
+                except:
+                    pass
+            
+            # Apply pitch curve
+            if curves['pitch'].has_edits():
+                self.root.after(0, self._update_progress, 20, "Applying pitch curve...")
+                self.root.after(0, self.log, "→ Applying pitch curve...")
+                
+                pitch_output = preview_dir / "vocals_pitch.wav"
+                success = processor.apply_pitch_curve(
+                    current_audio,
+                    pitch_output,
+                    curves['pitch']
+                )
+                if success and pitch_output.exists():
+                    current_audio = pitch_output
+                    self.root.after(0, self.log, "  ✓ Pitch curve applied")
+                else:
+                    raise RuntimeError("Failed to apply pitch curve")
+            
+            # Apply volume curve
+            if curves['volume'].has_edits():
+                self.root.after(0, self._update_progress, 50, "Applying volume curve...")
+                self.root.after(0, self.log, "→ Applying volume curve...")
+                
+                volume_output = preview_dir / "vocals_volume.wav"
+                success = processor.apply_volume_curve(
+                    current_audio,
+                    volume_output,
+                    curves['volume']
+                )
+                if success and volume_output.exists():
+                    current_audio = volume_output
+                    self.root.after(0, self.log, "  ✓ Volume curve applied")
+                else:
+                    raise RuntimeError("Failed to apply volume curve")
+            
+            # Apply reverb curve
+            if curves['reverb'].has_edits():
+                self.root.after(0, self._update_progress, 80, "Applying reverb curve...")
+                self.root.after(0, self.log, "→ Applying reverb curve...")
+                
+                reverb_output = preview_dir / "vocals_reverb.wav"
+                success = processor.apply_reverb_curve(
+                    current_audio,
+                    reverb_output,
+                    curves['reverb']
+                )
+                if success and reverb_output.exists():
+                    current_audio = reverb_output
+                    self.root.after(0, self.log, "  ✓ Reverb curve applied")
+                else:
+                    raise RuntimeError("Failed to apply reverb curve")
+            
+            # Save final preview with consistent name
+            final_preview = preview_dir / "vocals_preview.wav"
+            if current_audio != final_preview:
+                import shutil
+                import time
+                
+                # Delete old preview file if it exists (may be locked by spectrum editor)
+                if final_preview.exists():
+                    try:
+                        final_preview.unlink()
+                    except PermissionError:
+                        # File is locked, wait a moment and try again
+                        time.sleep(0.1)
+                        try:
+                            final_preview.unlink()
+                        except:
+                            # If still locked, use a different name
+                            final_preview = preview_dir / f"vocals_preview_{int(time.time())}.wav"
+                
+                shutil.copy(str(current_audio), str(final_preview))
+            
+            # Success - reload in spectrum editor (preserving curves)
+            self.root.after(0, self._curves_applied_callback, final_preview)
+            
+        except Exception as e:
+            error_msg = f"Failed to apply curves: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            self.root.after(0, self._curves_apply_failed_callback, error_msg)
+    
+    def _curves_applied_callback(self, processed_audio_path):
+        """UI callback when curves are successfully applied"""
+        try:
+            # Reload processed audio WITHOUT resetting curves
+            self.spectrum_editor.reload_audio_only(processed_audio_path)
+            
+            # Re-enable spectrum editor
+            self.spectrum_editor.set_enabled(True)
+            
+            # Update progress
+            self._update_progress(100, "✓ Changes applied to preview")
+            self.status_label.config(foreground="green")
+            
+            self.log("✓ Curve changes applied successfully!")
+            self.log("  Preview updated - control points preserved for further editing")
+            self.log("  Original vocals unchanged")
+            self.log("=" * 50)
+            
+        except Exception as e:
+            self.log(f"Error reloading preview: {e}")
+            self._curves_apply_failed_callback(str(e))
+    
+    def _curves_apply_failed_callback(self, error_msg):
+        """UI callback when curve application fails"""
+        # Re-enable spectrum editor
+        self.spectrum_editor.set_enabled(True)
+        
+        # Update UI
+        self._update_progress(0, "✗ Failed to apply changes")
+        self.status_label.config(foreground="red")
+        
+        # Show error
+        self.log(f"✗ {error_msg}")
+        self.log("=" * 50)
+        messagebox.showerror("Apply Failed", error_msg)
     
     def _create_log_window(self):
-        """Create separate log window"""
+        """Create separate log window (hidden by default in Phase 2)"""
         self.log_window = tk.Toplevel(self.root)
         self.log_window.title("Voice Revolver AI - Logs")
         self.log_window.geometry("700x1050")  # Increased to match main window height
@@ -784,6 +1179,16 @@ class VoiceRevolverApp:
         if hasattr(self, 'log_window'):
             self.log_window.deiconify()
             self.log_window.lift()
+            if hasattr(self, 'log_hidden'):
+                self.log_hidden = False
+    
+    def _toggle_log_window(self):
+        """Toggle log window visibility (F12 shortcut)"""
+        if hasattr(self, 'log_hidden') and self.log_hidden:
+            self._show_log_window()
+        else:
+            self._hide_log_window()
+            self.log_hidden = True
     
     def _clear_logs(self):
         """Clear the log window"""
@@ -820,6 +1225,11 @@ class VoiceRevolverApp:
             filename = Path(file_path).name
             self.original_label.config(text=filename, foreground="black")
             self.log(f"Original file: {filename}")
+            
+            # Phase 2: Enable separation button when original file selected
+            if not self.processing:
+                self.separation_btn.config(state="normal")
+            
             self._check_ready()
     
     def _select_reference(self):
@@ -856,15 +1266,16 @@ class VoiceRevolverApp:
             self._check_ready()
     
     def _on_gender_alignment_change(self):
-        """Handle gender alignment checkbox toggle"""
+        """Handle gender alignment checkbox toggle (Phase 2: Updated for new layout)"""
         enabled = self.use_gender_alignment_var.get()
-        mode = self.reference_mode.get()
         
-        # Show/hide gender selector based on checkbox state and mode
-        if enabled and mode == "model":
-            self.model_gender_frame.grid()  # Show manual gender selector for RVC
+        # Phase 2: Show/hide vocal match frame and threshold controls
+        if enabled:
+            self.orig_gender_frame.grid()  # Show vocal match selector
+            self.threshold_frame.grid()     # Show threshold controls
         else:
-            self.model_gender_frame.grid_remove()  # Hide gender selector
+            self.orig_gender_frame.grid_remove()  # Hide vocal match selector
+            self.threshold_frame.grid_remove()     # Hide threshold controls
         
         status = "enabled" if enabled else "disabled"
         self.log(f"Gender alignment {status}")
@@ -993,9 +1404,15 @@ class VoiceRevolverApp:
             return False, f"Error validating zip: {str(e)}"
     
     def _check_ready(self):
-        """Check if ready to start processing"""
-        if self.original_file and self.reference_file and not self.processing:
+        """Check if ready to start processing (Phase 2: Requires separation complete)"""
+        # Phase 2: Start Processing requires:
+        # 1. Reference file selected
+        # 2. Separation completed
+        # 3. Not currently processing
+        if self.reference_file and self.separation_complete and not self.processing:
             self.start_btn.config(state="normal")
+        else:
+            self.start_btn.config(state="disabled")
     
     def _update_progress(self, percentage, stage):
         """Update progress bar and status"""
@@ -1004,9 +1421,15 @@ class VoiceRevolverApp:
         self.root.update_idletasks()
     
     def _start_processing(self):
-        """Start processing in background thread"""
-        if not self.original_file or not self.reference_file:
-            messagebox.showwarning("Missing Files", "Please select both audio files")
+        """Start processing in background thread (Phase 2: Updated for two-stage workflow)"""
+        # Phase 2: Check separation complete
+        if not self.separation_complete:
+            messagebox.showwarning("Separation Required", 
+                                  "Please run vocal separation first!\n\nClick 'Run Separation' button.")
+            return
+        
+        if not self.reference_file:
+            messagebox.showwarning("Missing Reference", "Please select a reference voice or model")
             return
         
         # CRITICAL: Unload all audio files before processing to avoid file locks
@@ -1019,10 +1442,20 @@ class VoiceRevolverApp:
         self.progress_bar["value"] = 0
         
         self.log("=" * 60)
-        self.log("Starting voice replacement processing...")
+        self.log("Starting voice conversion processing...")
         self.log(f"Original: {Path(self.original_file).name}")
         self.log(f"Reference: {Path(self.reference_file).name}")
         self.log(f"Device: {self.device_var.get().upper()}")
+        
+        # Phase 2: Get editing curves from spectrum editor and store as instance variable
+        self.editing_curves = self.spectrum_editor.get_all_curves()
+        if self.editing_curves['pitch'].has_edits():
+            self.log(f"Using custom pitch curve ({len(self.editing_curves['pitch'].control_points)} points)")
+        if self.editing_curves['reverb'].has_edits():
+            self.log(f"Using custom reverb curve ({len(self.editing_curves['reverb'].control_points)} points)")
+        if self.editing_curves['volume'].has_edits():
+            self.log(f"Using custom volume curve ({len(self.editing_curves['volume'].control_points)} points)")
+        
         self.log("=" * 60)
         
         # Start processing in separate thread
@@ -1083,6 +1516,9 @@ class VoiceRevolverApp:
                 self.progress_tracker
             )
             
+            # Get editing curves from instance variable (set in _start_processing)
+            editing_curves = self.editing_curves if hasattr(self, 'editing_curves') else None
+            
             # Create voice params
             # NOTE: style and tau are ignored by ChatterBox (only used by OpenVoice)
             voice_params = VoiceConversionParams(
@@ -1098,7 +1534,8 @@ class VoiceRevolverApp:
                 threshold_low=self.threshold_low_var.get(),  # Pitch shift sensitivity - low
                 threshold_mid=self.threshold_mid_var.get(),  # Pitch shift sensitivity - mid
                 threshold_high=self.threshold_high_var.get(),  # Pitch shift sensitivity - high
-                separation_model=separation_model  # "demucs" (balanced) or "mdx" (best vocals)
+                separation_model=separation_model,  # "demucs" (balanced) or "mdx" (best vocals)
+                editing_curves=editing_curves  # Phase 2: User editing curves from spectrum editor
             )
             
             # Progress callback - receives (percentage, stage) args
@@ -1403,7 +1840,7 @@ class VoiceRevolverApp:
             # Load and play
             try:
                 mixer.music.load(file_path)
-                mixer.music.set_volume(self.volume_var.get())  # Apply current volume
+                mixer.music.set_volume(self.preview_volume_var.get() / 100.0)  # Apply current volume (0-100 -> 0.0-1.0)
                 mixer.music.play()
                 state['playing'] = True
                 self.current_track = track_id
@@ -1411,19 +1848,6 @@ class VoiceRevolverApp:
                 self._update_playback_time(track_id)
             except Exception as e:
                 self.log(f"⚠ Playback error: {e}")
-    
-    def _on_volume_change(self, value):
-        """Handle volume slider changes"""
-        try:
-            volume = float(value)
-            # Update volume label
-            self.volume_label.config(text=f"{int(volume * 100)}%")
-            # Apply to currently playing track
-            if hasattr(self, 'current_track') and self.current_track:
-                if self.preview_states[self.current_track]['playing']:
-                    mixer.music.set_volume(volume)
-        except Exception as e:
-            self.log(f"⚠ Volume change error: {e}")
     
     def _on_tau_change(self, value):
         """Handle tau slider changes - update entry field"""
@@ -1494,6 +1918,12 @@ class VoiceRevolverApp:
             mixer.music.set_pos(position)
         except Exception as e:
             self.log(f"⚠ Seek error: {e}")
+    
+    def _on_preview_volume_change(self, value):
+        """Handle preview section volume slider changes"""
+        volume = float(value) / 100.0
+        mixer.music.set_volume(volume)
+        self.preview_volume_label.config(text=f"{int(float(value))}%")
     
     def _update_playback_time(self, track_id):
         """Update time display and timeline while playing"""

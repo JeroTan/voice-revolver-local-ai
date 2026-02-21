@@ -83,6 +83,161 @@ class VoiceConversionParams:
     
     # Stem separation model selection
     separation_model: str = "demucs"  # "demucs" or "mdx" - MDX has better vocal isolation
+    
+    # Phase 2: Spectrum editor curves (optional)
+    editing_curves: Optional[Dict[str, Any]] = None  # Contains pitch, reverb, volume curves
+
+
+@dataclass
+class PitchControlPoint:
+    """Single control point for pitch automation"""
+    time: float  # Seconds into audio
+    shift_semitones: float  # Pitch adjustment at this point (-12 to +12)
+
+
+@dataclass
+class PitchCurve:
+    """Pitch automation curve for spectrum editor"""
+    control_points: list = field(default_factory=list)  # List of PitchControlPoint
+    interpolation: str = "cubic"  # "linear", "cubic", or "step"
+    
+    def has_edits(self) -> bool:
+        """Check if curve has any user edits"""
+        return len(self.control_points) > 0
+    
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for project save"""
+        return {
+            "control_points": [
+                {"time": pt.time, "shift": pt.shift_semitones}
+                for pt in self.control_points
+            ],
+            "interpolation": self.interpolation
+        }
+    
+    @staticmethod
+    def from_dict(data: dict) -> 'PitchCurve':
+        """Deserialize from dictionary"""
+        curve = PitchCurve(interpolation=data.get("interpolation", "cubic"))
+        for pt_data in data.get("control_points", []):
+            curve.control_points.append(
+                PitchControlPoint(time=pt_data["time"], shift_semitones=pt_data["shift"])
+            )
+        return curve
+
+
+@dataclass
+class ReverbControlPoint:
+    """Single control point for reverb automation"""
+    time: float  # Seconds into audio
+    wet_percent: float  # Reverb wet mix (0-100%)
+
+
+@dataclass
+class ReverbCurve:
+    """Reverb automation curve for spectrum editor"""
+    control_points: list = field(default_factory=list)  # List of ReverbControlPoint
+    interpolation: str = "linear"
+    
+    def has_edits(self) -> bool:
+        """Check if curve has any user edits"""
+        return len(self.control_points) > 0 and any(pt.wet_percent > 0 for pt in self.control_points)
+    
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for project save"""
+        return {
+            "control_points": [
+                {"time": pt.time, "wet_percent": pt.wet_percent}
+                for pt in self.control_points
+            ],
+            "interpolation": self.interpolation
+        }
+    
+    @staticmethod
+    def from_dict(data: dict) -> 'ReverbCurve':
+        """Deserialize from dictionary"""
+        curve = ReverbCurve(interpolation=data.get("interpolation", "linear"))
+        for pt_data in data.get("control_points", []):
+            curve.control_points.append(
+                ReverbControlPoint(time=pt_data["time"], wet_percent=pt_data["wet_percent"])
+            )
+        return curve
+
+
+@dataclass
+class VolumeControlPoint:
+    """Single control point for volume automation"""
+    time: float  # Seconds into audio
+    gain_db: float  # Volume adjustment in dB (-20 to +6)
+
+
+@dataclass
+class VolumeCurve:
+    """Volume automation curve for spectrum editor"""
+    control_points: list = field(default_factory=list)  # List of VolumeControlPoint
+    interpolation: str = "cubic"
+    
+    def has_edits(self) -> bool:
+        """Check if curve has any user edits"""
+        return len(self.control_points) > 0 and any(abs(pt.gain_db) > 0.1 for pt in self.control_points)
+    
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for project save"""
+        return {
+            "control_points": [
+                {"time": pt.time, "gain_db": pt.gain_db}
+                for pt in self.control_points
+            ],
+            "interpolation": self.interpolation
+        }
+    
+    @staticmethod
+    def from_dict(data: dict) -> 'VolumeCurve':
+        """Deserialize from dictionary"""
+        curve = VolumeCurve(interpolation=data.get("interpolation", "cubic"))
+        for pt_data in data.get("control_points", []):
+            curve.control_points.append(
+                VolumeControlPoint(time=pt_data["time"], gain_db=pt_data["gain_db"])
+            )
+        return curve
+
+
+@dataclass
+class NoiseControlPoint:
+    """Single control point for noise reduction automation"""
+    time: float  # Seconds into audio
+    reduction_percent: float  # Noise reduction strength (0-100%)
+
+
+@dataclass
+class NoiseCurve:
+    """Noise reduction automation curve for spectrum editor"""
+    control_points: list = field(default_factory=list)  # List of NoiseControlPoint
+    interpolation: str = "linear"
+    
+    def has_edits(self) -> bool:
+        """Check if curve has any user edits"""
+        return len(self.control_points) > 0 and any(pt.reduction_percent > 0 for pt in self.control_points)
+    
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for project save"""
+        return {
+            "control_points": [
+                {"time": pt.time, "reduction_percent": pt.reduction_percent}
+                for pt in self.control_points
+            ],
+            "interpolation": self.interpolation
+        }
+    
+    @staticmethod
+    def from_dict(data: dict) -> 'NoiseCurve':
+        """Deserialize from dictionary"""
+        curve = NoiseCurve(interpolation=data.get("interpolation", "linear"))
+        for pt_data in data.get("control_points", []):
+            curve.control_points.append(
+                NoiseControlPoint(time=pt_data["time"], reduction_percent=pt_data["reduction_percent"])
+            )
+        return curve
 
 
 @dataclass

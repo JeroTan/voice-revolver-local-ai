@@ -584,3 +584,279 @@ class AudioProcessor:
         except Exception as e:
             logger.error(f"RVC processing failed for {audio_path}: {e}")
             return False
+    
+    def apply_pitch_curve(
+        self,
+        audio_path: Path,
+        output_path: Path,
+        pitch_curve
+    ) -> bool:
+        """
+        Apply time-varying pitch shift based on user-edited pitch curve.
+        
+        Uses Parselmouth (Praat) to apply smooth pitch modifications at each time point.
+        The pitch curve is sampled using cubic spline interpolation for natural transitions.
+        
+        Args:
+            audio_path: Input audio file path
+            output_path: Output audio file path
+            pitch_curve: PitchCurve object with control points (time, shift_semitones)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not pitch_curve or not pitch_curve.has_edits():
+                logger.info("No pitch curve edits, skipping pitch curve processing")
+                return True
+            
+            logger.info(f"Applying pitch curve ({len(pitch_curve.control_points)} control points)")
+            
+            # Load audio with Parselmouth
+            sound = parselmouth.Sound(str(audio_path))
+            duration = sound.get_total_duration()
+            
+            # Get control points directly
+            curve_times = np.array([p.time for p in pitch_curve.control_points])
+            curve_shifts = np.array([p.shift_semitones for p in pitch_curve.control_points])
+            
+            # Apply time-varying pitch shift using Praat's pitch tier manipulation  
+            manipulation = call(sound, "To Manipulation", 0.01, 75, 600)
+            # Extract the existing pitch tier from manipulation (has detected pitches)
+            original_pitch_tier = call(manipulation, "Extract pitch tier")
+            
+            # Get all existing pitch points from the tier
+            num_points = call(original_pitch_tier, "Get number of points")
+            
+            # Create a new pitch tier for modified values
+            new_pitch_tier = call("Create PitchTier", "modified", 0, duration)
+            
+            # Modify each detected pitch point based on our curve
+            for i in range(1, num_points + 1):  # Praat uses 1-based indexing
+                time = call(original_pitch_tier, "Get time from index", i)
+                original_pitch = call(original_pitch_tier, "Get value at index", i)
+                
+                # Interpolate shift value at this time from our curve  
+                if len(curve_times) == 1:
+                    semitones = curve_shifts[0]
+                else:
+                    semitones = float(np.interp(time, curve_times, curve_shifts))
+                
+                # Convert semitones to frequency ratio
+                freq_ratio = 2.0 ** (semitones / 12.0)
+                
+                # Apply shift to this pitch point
+                new_pitch = original_pitch * freq_ratio
+                call(new_pitch_tier, "Add point", time, new_pitch)
+            
+            # Replace pitch tier and synthesize
+            call([new_pitch_tier, manipulation], "Replace pitch tier")
+            sound_shifted = call(manipulation, "Get resynthesis (overlap-add)")
+            
+            # Save output
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            sound_shifted.save(str(output_path), "WAV")
+            
+            logger.info(f"Pitch curve applied, saved to {output_path.name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Pitch curve application failed for {audio_path}: {e}")
+            return False
+    
+    def apply_volume_curve(
+        self,
+        audio_path: Path,
+        output_path: Path,
+        volume_curve
+    ) -> bool:
+        """
+        Apply time-varying volume (gain) based on user-edited volume curve.
+        
+        Applies smooth gain adjustments in dB at each time point using cubic interpolation.
+        
+        Args:
+            audio_path: Input audio file path
+            output_path: Output audio file path
+            volume_curve: VolumeCurve object with control points (time, gain_db)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not volume_curve or not volume_curve.has_edits():
+                logger.info("No volume curve edits, skipping volume curve processing")
+                return True
+            
+            logger.info(f"Applying volume curve ({len(volume_curve.control_points)} control points)")
+            
+            # Load audio
+            audio, sr = librosa.load(str(audio_path), sr=None, mono=True)
+            duration = len(audio) / sr
+            
+            # Create time points for each audio sample
+            time_points = np.arange(len(audio)) / sr
+            
+            # Sample the volume curve at each time point
+            curve_times = np.array([p.time for p in volume_curve.control_points])
+            curve_gains_db = np.array([p.gain_db for p in volume_curve.control_points])
+            
+            # Use cubic spline for smooth interpolation
+            from scipy.interpolate import interp1d, CubicSpline
+            if len(curve_times) == 1:
+                # Single point: constant gain
+                gain_db_values = np.full(len(time_points), curve_gains_db[0])
+            elif len(curve_times) == 2:
+                # Two points: use linear interpolation (cubic needs 3+ points)
+                interp_func = interp1d(
+                    curve_times,
+                    curve_gains_db,
+                    kind='linear',
+                    bounds_error=False,
+                    fill_value=(curve_gains_db[0], curve_gains_db[-1])
+                )
+                gain_db_values = interp_func(time_points)
+            else:
+                # 3+ points: use CubicSpline with natural boundary conditions
+                interp_func = CubicSpline(
+                    curve_times,
+                    curve_gains_db,
+                    bc_type='natural',  # Natural spline: 2nd derivative = 0 at boundaries
+                    extrapolate=True
+                )
+                gain_db_values = interp_func(time_points)
+            
+            # Convert dB to linear gain: linear_gain = 10^(dB/20)
+            linear_gains = 10.0 ** (gain_db_values / 20.0)
+            
+            # Apply gain curve to audio
+            audio_processed = audio * linear_gains
+            
+            # Prevent clipping
+            max_val = np.abs(audio_processed).max()
+            if max_val > 1.0:
+                audio_processed = audio_processed / max_val
+                logger.warning(f"Volume curve caused clipping, normalized to prevent distortion")
+            
+            # Save output
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(str(output_path), audio_processed, sr)
+            
+            logger.info(f"Volume curve applied, saved to {output_path.name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Volume curve application failed for {audio_path}: {e}")
+            return False
+    
+    def apply_reverb_curve(
+        self,
+        audio_path: Path,
+        output_path: Path,
+        reverb_curve
+    ) -> bool:
+        """
+        Apply time-varying reverb based on user-edited reverb curve.
+        
+        Uses pedalboard for high-quality reverb with time-varying wet/dry mix.
+        
+        Args:
+            audio_path: Input audio file path
+            output_path: Output audio file path
+            reverb_curve: ReverbCurve object with control points (time, wet_percent)
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not reverb_curve or not reverb_curve.has_edits():
+                logger.info("No reverb curve edits, skipping reverb curve processing")
+                return True
+            
+            logger.info(f"Applying reverb curve ({len(reverb_curve.control_points)} control points)")
+            
+            # Import pedalboard
+            try:
+                from pedalboard import Pedalboard, Reverb
+                from pedalboard.io import AudioFile
+            except ImportError:
+                logger.error("pedalboard not installed! Install with: pip install pedalboard")
+                return False
+            
+            # Load audio
+            audio, sr = librosa.load(str(audio_path), sr=None, mono=False)
+            if audio.ndim == 1:
+                audio = audio[np.newaxis, :]  # Convert mono to 2D array
+            
+            duration = audio.shape[1] / sr
+            
+            # Sample the reverb curve
+            curve_times = np.array([p.time for p in reverb_curve.control_points])
+            curve_wet_percent = np.array([p.wet_percent for p in reverb_curve.control_points])
+            
+            # Process audio in chunks with varying reverb wet mix
+            chunk_size_sec = 0.1  # 100ms chunks
+            chunk_size_samples = int(chunk_size_sec * sr)
+            num_chunks = int(np.ceil(audio.shape[1] / chunk_size_samples))
+            
+            processed_audio = np.zeros_like(audio)
+            
+            for i in range(num_chunks):
+                start_sample = i * chunk_size_samples
+                end_sample = min((i + 1) * chunk_size_samples, audio.shape[1])
+                chunk = audio[:, start_sample:end_sample]
+                
+                # Get wet percentage at this time point
+                chunk_time = start_sample / sr
+                
+                # Interpolate wet percentage
+                from scipy.interpolate import interp1d
+                if len(curve_times) == 1:
+                    wet_percent = curve_wet_percent[0]
+                elif len(curve_times) == 2:
+                    # Two points: use linear interpolation
+                    interp_func = interp1d(
+                        curve_times,
+                        curve_wet_percent,
+                        kind='linear',
+                        bounds_error=False,
+                        fill_value=(curve_wet_percent[0], curve_wet_percent[-1])
+                    )
+                    wet_percent = interp_func(chunk_time)
+                else:
+                    # 3+ points: use cubic interpolation
+                    interp_func = interp1d(
+                        curve_times,
+                        curve_wet_percent,
+                        kind='linear',  # Linear for reverb (simpler transitions)
+                        bounds_error=False,
+                        fill_value=(curve_wet_percent[0], curve_wet_percent[-1])
+                    )
+                    wet_percent = float(interp_func(chunk_time))
+                
+                # Apply reverb with this wet level
+                wet_level = wet_percent / 100.0  # Convert 0-100% to 0.0-1.0
+                dry_level = 1.0 - wet_level
+                
+                # Create reverb effect
+                board = Pedalboard([
+                    Reverb(room_size=0.5, wet_level=wet_level, dry_level=dry_level)
+                ])
+                
+                # Process chunk
+                chunk_processed = board(chunk, sr)
+                processed_audio[:, start_sample:end_sample] = chunk_processed
+            
+            # Save output
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if processed_audio.shape[0] == 1:
+                sf.write(str(output_path), processed_audio[0], sr)
+            else:
+                sf.write(str(output_path), processed_audio.T, sr)
+            
+            logger.info(f"Reverb curve applied, saved to {output_path.name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Reverb curve application failed for {audio_path}: {e}")
+            return False

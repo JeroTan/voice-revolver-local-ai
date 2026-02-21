@@ -87,8 +87,11 @@ class MDXWrapper:
         Returns:
             (stem_dict, error_message) where stem_dict contains paths to separated files
         """
+        # Auto-load model if not loaded (same as DemucsWrapper)
         if not self._model_loaded:
-            return None, "Model not loaded"
+            success, error = self.load_model()
+            if not success:
+                return None, error
         
         try:
             output_dir.mkdir(parents=True, exist_ok=True)

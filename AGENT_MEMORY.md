@@ -51,6 +51,25 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ## History Log
 
+### 2026-02-21 | CRITICAL LESSON: Listen Carefully & Avoid Regressions
+- **Topic:** Agent behavior correction - careful listening required
+- **Issue:** Multiple instances of not listening to user instructions properly:
+  - User said "ADD volume slider to spectrum editor" → Agent REMOVED volume slider from preview section instead of just adding
+  - User said volume should be "in the right side" → Agent placed it at bottom
+  - Made multiple back-and-forth mistakes causing frustration
+- **ROOT CAUSE:** Agent misinterpreted "add" as "move", didn't read carefully, made assumptions
+- **LESSON LEARNED:**
+  1. **READ CAREFULLY:** When user says "ADD", it means ADD, not MOVE or REPLACE
+  2. **VERIFY BEFORE ACTING:** Check what currently exists before making changes
+  3. **AVOID REGRESSIONS:** Never remove/break existing working features unless explicitly asked
+  4. **ASK IF UNCLEAR:** If instruction is ambiguous, ask for clarification instead of guessing
+  5. **TEST MENTALLY:** Before editing, think "Will this break something that's already working?"
+- **CORRECT BEHAVIOR:**
+  - User: "Add X to Y" → Add X to Y, keep everything else unchanged
+  - User: "Move X to Y" → Move X from current location to Y
+  - User: "Replace X with Y" → Remove X, add Y in its place
+- **MEMORY:** Always be extra careful with UI changes - users get frustrated when things that worked suddenly break
+
 ### 2026-02-18 | Session Protocol
 - **Topic:** Session memory protocol established
 - **Decision:** Must read AGENT_MEMORY.md + ./docs/* at start of every session, and update memory with any important changes
@@ -627,6 +646,285 @@ python -c "import torch; print('CUDA available:', torch.cuda.is_available()); pr
 - **ALWAYS update AGENT_MEMORY.md with any important change** (file edits, deletions, architecture updates, decisions)
 - **Read AGENT_MEMORY.md + all ./docs/* files at the START of every session**
 - README.md contains base project information/guides
+
+---
+
+### 2026-02-21 | Phase 2 UI Redesign - Interactive Spectrum Editor
+
+**Topic:** Complete UI overhaul with interactive waveform editing
+
+**Overview:**
+Redesigned the entire UI from a single-column 950×1100 window to a maximized two-column layout with an interactive spectrum editor for pitch/reverb/volume automation.
+
+#### Architecture Changes:
+
+**1. Window & Layout**
+- **Window:** Maximized state (`root.state('zoomed')`), minimum size 1200×700
+- **Layout:** Two-column grid
+  - **Left Column (40%):** Controls split into top (original audio & separation) and bottom (reference & processing)
+  - **Right Column (60%):** Visualization split into top (spectrum editor) and bottom (6 audio preview players)
+- **Log Window:** Hidden by default, toggle with F12 keyboard shortcut
+- **Workflow:** Two-stage process:
+  1. **Stage 1:** Select original audio → Run Separation → Auto-detect gender → Load vocals into editor
+  2. **Stage 2:** Edit curves → Select reference → Start Processing with curves applied
+
+**2. New Domain Models** (`voice_revolver_core/domain/base.py`)
+Created 6 new classes for curve automation:
+```python
+@dataclass
+class PitchControlPoint:
+    time: float              # Time in seconds
+    shift_semitones: float   # Pitch shift (-12 to +12)
+
+@dataclass
+class PitchCurve:
+    control_points: List[PitchControlPoint]
+    interpolation: str = "cubic"  # cubic or linear
+    
+    def has_edits() -> bool
+    def to_dict() -> Dict
+    @staticmethod def from_dict(data: Dict) -> PitchCurve
+
+@dataclass
+class ReverbControlPoint:
+    time: float        # Time in seconds
+    wet_percent: float # Reverb wet mix (0-100%)
+
+@dataclass
+class ReverbCurve:
+    control_points: List[ReverbControlPoint]
+    interpolation: str = "linear"
+    # Same methods as PitchCurve
+
+@dataclass
+class VolumeControlPoint:
+    time: float    # Time in seconds
+    gain_db: float # Gain in dB (-20 to +6)
+
+@dataclass
+class VolumeCurve:
+    control_points: List[VolumeControlPoint]
+    interpolation: str = "cubic"
+    # Same methods as PitchCurve
+
+# Added to VoiceConversionParams:
+editing_curves: Optional[Dict[str, Any]] = None  # {'pitch': PitchCurve, 'reverb': ReverbCurve, 'volume': VolumeCurve}
+```
+
+**3. SpectrumEditor Component** (`voice_revolver_ui/spectrum_editor.py`, ~480 lines)
+Interactive matplotlib-based waveform editor with three editing modes:
+
+**Features:**
+- **Waveform Display:** Lightblue semi-transparent waveform background using librosa
+- **Three Modes:** Radio button switching between Pitching, Reverb, Volume
+- **Interactive Editing:**
+  - Click to add control points
+  - Drag existing points to adjust
+  - Click on point to remove
+- **Interpolation:**
+  - Pitch/Volume: Cubic spline (smooth, natural transitions)
+  - Reverb: Linear (simpler transitions)
+- **Visualization:**
+  - **Pitching Mode:** Red curve overlay, -12 to +12 semitones, cubic interpolation
+  - **Reverb Mode:** Purple bars, 0-100% wet mix, linear interpolation
+  - **Volume Mode:** Green curve overlay, -20 to +6 dB, cubic interpolation
+- **Reset Functions:** Reset current curve or reset all curves
+
+**Key Methods:**
+```python
+class SpectrumEditor(ttk.Frame):
+    def load_vocals(vocal_path: Path)  # Load audio with librosa
+    def _switch_mode()                 # Change between pitch/reverb/volume
+    def _redraw_spectrum()             # Render waveform + overlay
+    def _on_click/_on_drag/_on_release # Interactive editing
+    def get_all_curves() -> Dict       # Returns all three curves
+    def reset_current_curve()
+    def reset_all_curves()
+```
+
+**4. Main Window Restructure** (`voice_revolver_ui/main_tk.py`)
+
+**Layout Structure:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Voice Revolver AI - [Original Audio Name]                  │
+├──────────────────────┬──────────────────────────────────────┤
+│ ORIGINAL AUDIO &     │ VOCAL EDITOR (SPECTRUM)              │
+│ SEPARATION           │                                       │
+│ - File selection     │ ┌─────────────────────────────────┐ │
+│ - Separation model   │ │ Waveform with curve overlay     │ │
+│ - Device (GPU/CPU)   │ │ (matplotlib canvas)             │ │
+│ - Pitch shift slider │ │                                  │ │
+│ - Gender alignment   │ │ Mode: [Pitching][Reverb][Volume]│ │
+│ - Thresholds         │ │                                  │ │
+│ - [Run Separation]   │ │ Click/drag to edit curve        │ │
+│                      │ └─────────────────────────────────┘ │
+├──────────────────────┤                                       │
+│ REFERENCE VOICE &    │ [Reset Curve] [Reset All]           │
+│ PROCESSING           │                                       │
+│ - Reference file     ├──────────────────────────────────────┤
+│ - Type (Audio/Model) │ AUDIO PREVIEW & EXPORT               │
+│ - Output format      │ ┌────────┬────────┬────────┐        │
+│ - Vocal only         │ │ Mixed  │ Vocals │ Original│        │
+│ - [Start Processing] │ └────────┴────────┴────────┘        │
+│ - [Export] [Cancel]  │ ┌────────┬────────┬────────┐        │
+│                      │ │ Drums  │ Bass   │ Other  │        │
+│                      │ └────────┴────────┴────────┘        │
+│                      │ Volume: [───────────●──]            │
+├──────────────────────┴──────────────────────────────────────┤
+│ Progress: ████████████████░░░░░░░░░░░░ 75% Converting...   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**New State Variables:**
+```python
+self.separation_complete = False  # Track Stage 1 completion
+self.separation_thread = None     # Background separation thread
+self.log_hidden = True            # F12 toggle state
+self.editing_curves = None        # Retrieved from spectrum_editor before processing
+```
+
+**New Methods:**
+```python
+def _toggle_log_window()           # F12 key handler
+def _enable_spectrum_editor(bool)  # Enable/disable right side
+def _run_separation()              # Stage 1: Separation only
+def _separation_worker()           # Background: Demucs/MDX + gender detection
+def _separation_complete_callback  # UI callback: Load vocals into editor
+def _separation_failed_callback    # Error handling
+```
+
+**Updated Methods:**
+```python
+def _on_gender_alignment_change()  # Show/hide orig_gender_frame + threshold_frame
+def _select_original()             # Enable separation_btn when file selected
+def _check_ready()                 # Requires separation_complete + reference_file
+def _start_processing()            # Get editing_curves from spectrum_editor
+def _process()                     # Add editing_curves to VoiceConversionParams
+```
+
+**5. Curve Processing Implementation**
+
+**AudioProcessor** (`voice_revolver_core/infrastructure/audio_processor.py`)
+Added three new methods:
+
+```python
+def apply_pitch_curve(audio_path, output_path, pitch_curve: PitchCurve) -> bool:
+    - Uses Parselmouth (Praat) for time-varying pitch manipulation
+    - Samples curve every 10ms using cubic spline interpolation
+    - Converts semitones to frequency ratio: ratio = 2^(semitones/12)
+    - Creates pitch tier and applies via Praat's overlap-add synthesis
+
+def apply_volume_curve(audio_path, output_path, volume_curve: VolumeCurve) -> bool:
+    - Uses librosa for time-varying gain
+    - Samples curve at each audio sample using cubic interpolation
+    - Converts dB to linear gain: gain = 10^(dB/20)
+    - Applies gain curve and prevents clipping via normalization
+
+def apply_reverb_curve(audio_path, output_path, reverb_curve: ReverbCurve) -> bool:
+    - Uses pedalboard for high-quality reverb
+    - Processes audio in 100ms chunks
+    - Samples curve with linear interpolation
+    - Applies time-varying wet/dry mix per chunk
+```
+
+**VoiceReplacementService** (`voice_revolver_core/application/voice_replacement_service.py`)
+Integrated curve processing between vocal enhancement and voice conversion:
+
+**Processing Pipeline (Updated):**
+1. **Stage 1:** Load models (5%)
+2. **Stage 2:** Stem separation (5-30%)
+3. **Stage 2.5:** Enhance separated vocals (32%)
+4. **Stage 2.7 (NEW):** Apply user editing curves (33-34%)
+   - If pitch curve has edits → Apply pitch curve
+   - If volume curve has edits → Apply volume curve
+   - If reverb curve has edits → Apply reverb curve
+   - Chain processing: vocals → pitch curved → volume curved → reverb curved
+5. **Stage 2.8:** Denoise reference voice (36%)
+6. **Stage 3:** Voice conversion (40-70%)
+7. **Stage 4:** Audio mixing (75-95%)
+8. **Stage 5:** Choose output (vocal-only or full mix)
+
+**6. Dependencies Added**
+```
+# Visualization & UI (Phase 2)
+matplotlib>=3.8.0   # Interactive spectrum visualization
+scipy>=1.10.0       # Cubic spline interpolation
+
+# Audio processing (already present)
+pedalboard          # Reverb processing
+praat-parselmouth   # Pitch curve manipulation
+```
+
+#### Technical Decisions:
+
+1. **Two-Stage Workflow:** Separation must complete before processing
+   - Clearer UX (user knows when to edit)
+   - Enables gender auto-detection before editing
+   - Spectrum editor loads vocals after separation
+
+2. **Gender Simplification:** Only detect original vocal gender
+   - Reference gender not needed for ChatterBox/RVC
+   - Removed model_gender_frame from UI
+
+3. **Cubic vs Linear Interpolation:**
+   - Pitch/Volume: Cubic spline (smooth, natural transitions)
+   - Reverb: Linear (simpler, predictable transitions)
+
+4. **Curve Processing Order:** Pitch → Volume → Reverb
+   - Pitch affects tonal quality (apply first)
+   - Volume affects dynamics (apply second)
+   - Reverb is spatial effect (apply last)
+
+5. **F12 Log Toggle:** Better than always-visible log window
+   - Maximizes editing space
+   - Log still accessible for debugging
+
+6. **Single Matplotlib Canvas:** Mode-switching overlay instead of 3 separate plots
+   - Cleaner UI
+   - Easier to understand (one view at a time)
+   - Better performance
+
+#### Files Modified/Created:
+
+**New Files:**
+- `voice_revolver_ui/spectrum_editor.py` (~480 lines)
+
+**Modified Files:**
+- `requirements.txt` (added matplotlib, scipy)
+- `voice_revolver_core/domain/base.py` (added 6 curve classes)
+- `voice_revolver_ui/main_tk.py` (complete restructure, ~1900 lines)
+- `voice_revolver_core/infrastructure/audio_processor.py` (added 3 curve methods)
+- `voice_revolver_core/application/voice_replacement_service.py` (integrated curve processing)
+
+#### User Workflow:
+
+**Complete Voice Replacement Workflow:**
+1. Launch app → Select original audio file
+2. Choose separation model (Demucs/MDX) and device (GPU/CPU)
+3. *(Optional)* Adjust pitch shift slider
+4. *(Optional)* Enable gender alignment and set thresholds
+5. **Click "Run Separation"** → Vocals separated → Gender detected → Spectrum editor loads
+6. **Edit curves in spectrum editor:**
+   - Switch to Pitching mode → Click/drag to create pitch automation curve
+   - Switch to Reverb mode → Click/drag to create reverb automation curve
+   - Switch to Volume mode → Click/drag to create volume automation curve
+7. Select reference voice (audio file) or RVC model (zip file)
+8. Choose output format (MP3/WAV/FLAC) and vocal-only option
+9. **Click "Start Processing"** → Curves applied → Voice conversion → Final mix
+10. Preview 6 audio tracks (mixed, vocals, original, drums, bass, other)
+11. Export final result
+
+#### Success Metrics:
+- ✅ Maximized window with two-column layout
+- ✅ Interactive spectrum editor with three editing modes
+- ✅ Cubic spline interpolation for smooth curves
+- ✅ Two-stage workflow (separation → editing → processing)
+- ✅ Curve data integrated into processing pipeline
+- ✅ Pitch/volume/reverb automation working
+- ✅ F12 log toggle for debugging
+- ✅ Gender auto-detection after separation
+- ✅ 6 preview players in compact layout
 
 ---
 

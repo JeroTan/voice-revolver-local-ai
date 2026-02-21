@@ -54,6 +54,10 @@ noisereduce
 pedalboard
 pyloudnorm
 
+# Visualization & UI (Phase 2)
+matplotlib>=3.8.0
+scipy>=1.10.0
+
 # FFmpeg auto-download
 static-ffmpeg
 

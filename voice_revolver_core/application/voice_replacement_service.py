@@ -183,11 +183,76 @@ class VoiceReplacementService:
             vocals_to_convert = enhanced_vocals_result if enhanced_vocals_result else stems.vocals
             logger.info(f"Using vocals for conversion: {vocals_to_convert}")
             
-            # Stage 2.6: Denoise reference voice (ONLY if using audio mode, skip for RVC model)
+            # Stage 2.7: Apply user editing curves (pitch/volume/reverb) - Phase 2
+            if voice_params.editing_curves:
+                logger.info("Phase 2: Applying user editing curves...")
+                
+                # Apply pitch curve if edited
+                if voice_params.editing_curves.get('pitch') and voice_params.editing_curves['pitch'].has_edits():
+                    self._update_progress(
+                        ProcessingStage.VOICE_CONVERSION,
+                        33,
+                        "Applying custom pitch curve..."
+                    )
+                    pitch_curve_output = output_dir / "vocals_pitch_curved.wav"
+                    success = self._audio_processor.apply_pitch_curve(
+                        vocals_to_convert,
+                        pitch_curve_output,
+                        voice_params.editing_curves['pitch']
+                    )
+                    if success:
+                        vocals_to_convert = pitch_curve_output
+                        logger.info(f"Pitch curve applied successfully")
+                    else:
+                        logger.warning("Pitch curve application failed, continuing with original vocals")
+                
+                # Apply volume curve if edited
+                if voice_params.editing_curves.get('volume') and voice_params.editing_curves['volume'].has_edits():
+                    self._update_progress(
+                        ProcessingStage.VOICE_CONVERSION,
+                        33,
+                        "Applying custom volume curve..."
+                    )
+                    volume_curve_output = output_dir / "vocals_volume_curved.wav"
+                    success = self._audio_processor.apply_volume_curve(
+                        vocals_to_convert,
+                        volume_curve_output,
+                        voice_params.editing_curves['volume']
+                    )
+                    if success:
+                        vocals_to_convert = volume_curve_output
+                        logger.info(f"Volume curve applied successfully")
+                    else:
+                        logger.warning("Volume curve application failed, continuing with current vocals")
+                
+                # Apply reverb curve if edited (do this last, after pitch and volume)
+                if voice_params.editing_curves.get('reverb') and voice_params.editing_curves['reverb'].has_edits():
+                    self._update_progress(
+                        ProcessingStage.VOICE_CONVERSION,
+                        34,
+                        "Applying custom reverb curve..."
+                    )
+                    reverb_curve_output = output_dir / "vocals_reverb_curved.wav"
+                    success = self._audio_processor.apply_reverb_curve(
+                        vocals_to_convert,
+                        reverb_curve_output,
+                        voice_params.editing_curves['reverb']
+                    )
+                    if success:
+                        vocals_to_convert = reverb_curve_output
+                        logger.info(f"Reverb curve applied successfully")
+                    else:
+                        logger.warning("Reverb curve application failed, continuing with current vocals")
+                
+                logger.info(f"Final vocals after curve processing: {vocals_to_convert}")
+            else:
+                logger.info("No editing curves provided, skipping curve processing")
+            
+            # Stage 2.8: Denoise reference voice (ONLY if using audio mode, skip for RVC model)
             if reference_mode == "audio":
                 self._update_progress(
                     ProcessingStage.VOICE_CONVERSION,
-                    33,
+                    36,
                     "Cleaning reference voice..."
                 )
                 denoised_reference_path = output_dir / "reference_denoised.wav"
@@ -205,10 +270,10 @@ class VoiceReplacementService:
                 reference_to_use = reference_voice_path
                 logger.info(f"Using RVC model: {reference_to_use}")
             
-            # Stage 3: Voice conversion (30-70%)
+            # Stage 3: Voice conversion (40-70%)
             self._update_progress(
                 ProcessingStage.VOICE_CONVERSION,
-                35,
+                40,
                 "Converting voice..." + (" (RVC)" if reference_mode == "model" else " (ChatterBox)")
             )
             converted_vocals, err = self._convert_voice(
