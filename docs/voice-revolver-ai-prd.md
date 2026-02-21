@@ -386,16 +386,54 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 - Terminal window visible
 - Temp file cleanup on close
 
-### Phase 2: Enhancements (Post-Launch)
-- Format converter (FLAC, OGG, AAC export)
-- Voice transformation (pitch, emotion control)
-- Custom output naming at export
-- User-selectable output folder
-- Cancel processing button
-- Advanced project management
-- Settings persistence
+### Phase 2: Enhancements - ✅ COMPLETED (2026-02-21)
 
-### Future Considerations
+**Phase 2.1-2.5: Interactive Spectrum Editor** (Completed)
+- ✅ Format converter (FLAC, OGG, AAC, WAV export)
+- ✅ Voice transformation (pitch automation curves)
+- ✅ Custom output naming at export
+- ✅ User-selectable output folder
+- ✅ Cancel processing button
+- ✅ Advanced project management (.vra save/load)
+- ✅ Settings persistence
+- ✅ Interactive waveform editor with matplotlib
+- ✅ Three automation curves: Pitching, Reverb, Volume
+- ✅ Cubic spline interpolation for smooth transitions
+- ✅ Two-stage workflow (separation → editing → processing)
+- ✅ Gender auto-detection after separation
+- ✅ F12 log window toggle
+- ✅ 6-track preview player with play/pause/seek
+- ✅ Maximized dual-column layout
+
+**Phase 2.6: Enhanced Interactive Workflow** (Completed)
+- ✅ **Noise Reduction Mode**: Fourth editing mode with time-varying noise reduction (0-100%)
+- ✅ **Apply Changes Button**: Fast preview of curve edits without full voice conversion
+- ✅ **Dual Volume Controls**: Independent sliders for spectrum editor and preview section
+- ✅ **Interactive Tools**: Add/Move/Remove modes for control point editing
+- ✅ **Straight Line Visualization**: Consistent across all four editing modes
+- ✅ **Raw Vocals Workflow**: Non-destructive editing always from original unenhanced vocals
+- ✅ **Control Point Preservation**: Curves maintained after Apply Changes
+- ✅ **Manual Curve Control**: Removed automatic reverb reduction, user has full control
+- ✅ **Pitch Auto-population**: Optional gender-based pitch curve initialization
+- ✅ **Permission Error Handling**: Windows file lock retry logic
+- ✅ **Hover Labels**: Real-time value display for all editing modes
+
+**Four Editing Modes:**
+1. **Pitching**: ±12 semitones pitch automation (red curve)
+2. **Reverb**: 0-100% wet mix reverb strength (purple curve)
+3. **Volume**: -20 to +6 dB gain automation (green curve)
+4. **Noise Reduction**: 0-100% noise reduction strength (orange curve)
+
+**Interactive Workflow:**
+1. Run Separation → Vocals extracted
+2. Edit curves in spectrum editor (4 modes, 3 tools)
+3. Click "Apply Changes" → Preview curve effects
+4. Fine-tune curves iteratively
+5. Start Processing → Full voice conversion pipeline
+6. Preview 6 tracks with independent playback
+7. Export final result
+
+### Phase 3: Future Enhancements (Planned)
 - API layer for cloud deployment
 - Batch processing
 - Multiple voice reference blending

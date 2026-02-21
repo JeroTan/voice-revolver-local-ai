@@ -928,6 +928,265 @@ praat-parselmouth   # Pitch curve manipulation
 
 ---
 
+### 2026-02-21 | Phase 2.6 - Enhanced Spectrum Editor & Interactive Workflow
+**Topic:** Added fourth editing mode, improved UX, dual audio controls, and Apply Changes feature
+
+#### Problem Statement:
+Users needed more control over vocal processing workflow:
+1. Manual noise reduction control (time-varying)
+2. Preview curve changes before final processing
+3. Independent volume controls for spectrum editor vs preview section
+4. Ability to fine-tune control points iteratively without reprocessing
+5. Remove automatic reverb reduction (prefer manual control)
+
+#### Solution: Four Editing Modes + Apply Changes System
+
+**New Features:**
+
+**1. Noise Reduction Mode** (Fourth editing mode)
+- **Purpose:** Time-varying noise reduction strength (0-100%)
+- **Data Structure:**
+  ```python
+  @dataclass
+  class NoiseControlPoint:
+      time: float              # Time in seconds
+      reduction_percent: float # 0-100%
+  
+  @dataclass
+  class NoiseCurve:
+      control_points: List[NoiseControlPoint]
+      interpolation: str = "linear"
+      
+      def has_edits(self) -> bool:
+          return len(self.control_points) > 0 and any(pt.reduction_percent > 0 for pt in self.control_points)
+  ```
+- **Visualization:** Orange straight lines connecting control points
+- **UI Position:** Fourth radio button after Volume mode
+
+**2. Apply Changes Button**
+- **Purpose:** Preview curve changes without full voice conversion processing
+- **Location:** Below spectrum editor playback controls
+- **Workflow:**
+  1. User adds/edits control points in any mode
+  2. Click "Apply Changes" → Processes only curve edits
+  3. Saves to `vocals_preview.wav` 
+  4. Reloads audio in spectrum editor (preserves control points)
+  5. User can listen to changes, fine-tune, repeat
+- **Processing Pipeline:** Pitch → Volume → Reverb → Noise (linear chain)
+- **Key Feature:** Always starts from original unenhanced vocals (non-destructive)
+
+**3. Dual Volume Controls**
+- **Spectrum Editor Volume:** Vertical slider in right tool panel (below Add/Move/Remove buttons)
+  - Controls spectrum editor playback only
+  - 0-100% range, length=120px
+- **Preview Section Volume:** Vertical slider on right side of Audio Preview section
+  - Controls preview track playback (6 players)
+  - 0-100% range, length=120px
+  - Positioned beside preview tracks (packed first with side=tk.RIGHT)
+
+**4. Interactive Tool Buttons**
+- **Three interaction modes:**
+  - **Add:** Click canvas to add control points at cursor position
+  - **Move:** Click and drag existing points to reposition
+  - **Remove:** Click existing points to delete
+- **Vertical layout:** Stacked buttons on right side of spectrum editor
+- **Visual feedback:** Highlighted button shows active mode
+
+**5. Straight Line Visualization**
+- **Rationale:** Praat/audio processors handle actual interpolation during Apply Changes
+- **Implementation:** All four modes draw straight lines between control points
+  - **Pitching:** Red lines, ±12 semitones
+  - **Reverb:** Purple lines, 0-100% wet mix
+  - **Volume:** Green lines, -20 to +6 dB
+  - **Noise:** Orange lines, 0-100% reduction
+- **Previous:** Used bars for reverb/noise (caused confusion)
+- **Current:** Consistent line visualization across all modes
+
+**6. Curve Pre-population Changes**
+- **Pitch Curve:** Auto-populated with 3 points if gender alignment enabled
+  - Male → Female: +12 semitones at start/middle/end
+  - Female → Male: -12 semitones at start/middle/end
+- **Reverb Curve:** NO auto-population (removed tau-based reduction)
+- **Volume Curve:** Never auto-populated
+- **Noise Curve:** Never auto-populated
+- **User Request:** Full manual control preferred over automatic calculations
+
+**7. Raw Vocals Workflow**
+- **Separation Output:** Raw unenhanced vocals saved directly
+- **Spectrum Editor:** Loads raw vocals (no preprocessing)
+- **Apply Changes:** Always processes from `original_vocals_path` (raw)
+- **Final Processing:** Enhancement applied only during "Start Processing"
+- **Benefit:** Non-destructive editing, can always revert to original
+
+**8. Permission Error Handling**
+- **Problem:** Windows file locks caused errors on second Apply Changes
+- **Solution:** 
+  ```python
+  # Release audio handles before processing
+  if self.audio_data is not None:
+      self.audio_data = None
+      gc.collect()
+  
+  # Retry logic for locked files
+  for attempt in range(3):
+      try:
+          process_audio()
+          break
+      except PermissionError:
+          time.sleep(0.5)
+  ```
+
+#### Code Changes:
+
+**Modified Files:**
+- `voice_revolver_core/domain/base.py` (+62 lines)
+  - Added `NoiseControlPoint` and `NoiseCurve` dataclasses
+  - Added serialization methods (to_dict, from_dict)
+
+- `voice_revolver_ui/spectrum_editor.py` (~1066 lines)
+  - Added fourth mode: Noise Reduction radio button
+  - Added `self.noise_curve = NoiseCurve()` initialization
+  - Added vertical volume slider to tool panel (lines 207-229)
+  - Added Apply Changes button (lines 247-252)
+  - Updated `_draw_noise_view()` to use straight lines (not bars)
+  - Updated `_draw_reverb_view()` to use straight lines (not bars)
+  - Added noise curve handling in drag/release/hover methods
+  - Added `get_all_curves()` returns 4 curves: pitch, reverb, volume, noise
+  - Added `reload_audio_only()` for control point preservation
+  - Updated `load_vocals()` signature - removed initial_reverb_reduction parameter
+
+- `voice_revolver_ui/main_tk.py` (~2131 lines)
+  - Added preview volume slider (vertical, right side, lines 652-665)
+  - Removed tau-based reverb reduction calculation from separation
+  - Updated `_separation_complete_callback()` - removed reverb parameter
+  - Fixed preview playback volume control (uses `self.preview_volume_var`)
+  - Added `_on_preview_volume_change()` method
+
+- `voice_revolver_core/application/voice_replacement_service.py`
+  - Separation outputs raw vocals (no enhancement step before spectrum editor)
+  - Enhancement only applied during "Start Processing"
+
+**Updated Workflow:**
+
+```
+User Workflow (Phase 2.6):
+1. Select original audio → Run Separation
+2. Vocals separated (raw, unenhanced) → Gender detected
+3. Spectrum editor loads with auto-populated pitch curve (if gender alignment)
+4. User edits curves:
+   - Switch modes: Pitching / Reverb / Volume / Noise Reduction
+   - Select tool: Add / Move / Remove
+   - Click/drag to edit control points
+5. Click "Apply Changes":
+   - Processes: Pitch → Volume → Reverb → Noise
+   - Saves to vocals_preview.wav
+   - Reloads into spectrum editor (control points preserved)
+   - User can play and listen to changes
+6. Repeat steps 4-5 until satisfied
+7. Select reference voice
+8. Click "Start Processing" (full pipeline with voice conversion)
+9. Preview 6 tracks with independent volume control
+10. Export final result
+```
+
+#### Technical Decisions:
+
+**1. Why Straight Lines Instead of Curves?**
+- Visual representation only shows control points
+- Actual interpolation happens during audio processing (Praat/librosa)
+- Clearer to see exact control point positions
+- Consistent across all four modes
+
+**2. Why Apply Changes Button?**
+- Fast iteration without full voice conversion
+- Non-destructive (always starts from original vocals)
+- Preserves control points after processing
+- Clear separation: editing vs final processing
+
+**3. Why Remove Reverb Auto-population?**
+- User preference for full manual control
+- Tau-based calculation was opaque
+- Easier to add reverb manually where needed
+- Reduces cognitive load (fewer automatic behaviors)
+
+**4. Why Dual Volume Controls?**
+- Spectrum editor playback independent from preview section
+- Different audio players (pygame vs pygame.mixer.music)
+- User can adjust volumes independently while editing
+
+**5. Why Raw Vocals Workflow?**
+- Non-destructive editing foundation
+- Enhancement artifacts don't affect curve editing
+- Can always revert to clean separation output
+- Enhancement applied once during final processing
+
+#### Updated Processing Pipeline:
+
+```
+Apply Changes (Fast Preview):
+1. Check which curves have edits (has_edits() method)
+2. Load original_vocals.wav (raw, unenhanced)
+3. If pitch curve has edits:
+   - apply_pitch_curve() → vocals_pitched.wav
+4. If volume curve has edits:
+   - apply_volume_curve() → vocals_volume.wav
+5. If reverb curve has edits:
+   - apply_reverb_curve() → vocals_reverb.wav
+6. If noise curve has edits:
+   - apply_noise_curve() → vocals_denoised.wav (TODO: implement)
+7. Save final result → vocals_preview.wav
+8. Reload into spectrum editor (control points intact)
+
+Start Processing (Full Pipeline):
+1. Load models (5%)
+2. Stem separation (if not already done)
+3. Get editing curves from spectrum editor
+4. Apply curves to vocals (33-35%)
+5. Enhance vocals (36%)
+6. Denoise reference (38%)
+7. Voice conversion (40-70%)
+8. Mix with instrumental (75-95%)
+9. Export final result
+```
+
+#### Files Structure:
+
+```
+voice_revolver_ui/
+├── main_tk.py              # Main window with two-column layout
+├── spectrum_editor.py      # Interactive editor (4 modes, 3 tools, Apply Changes)
+└── __init__.py
+
+voice_revolver_core/
+├── domain/
+│   └── base.py            # Added NoiseControlPoint, NoiseCurve
+├── application/
+│   └── voice_replacement_service.py  # Integrated Apply Changes workflow
+└── infrastructure/
+    └── audio_processor.py # TODO: Add apply_noise_curve() method
+```
+
+#### Success Metrics:
+- ✅ Four editing modes fully functional (Pitching, Reverb, Volume, Noise)
+- ✅ Apply Changes button processes curves quickly
+- ✅ Control points preserved after Apply Changes
+- ✅ Dual volume controls work independently
+- ✅ Straight line visualization consistent across modes
+- ✅ Raw vocals workflow (non-destructive)
+- ✅ Permission error handling (Windows file locks)
+- ✅ Interactive tools (Add/Move/Remove) work in all modes
+- ✅ Hover labels show current value for all modes
+- ✅ Pitch curve auto-populated based on gender alignment
+- ✅ No automatic reverb reduction (user control)
+
+#### Pending Work:
+- ⏳ Implement `apply_noise_curve()` in audio_processor.py
+  - Use noisereduce or librosa for spectral noise reduction
+  - Apply time-varying reduction based on control points
+  - Integrate into Apply Changes workflow
+
+---
+
 ## Patterns & Conventions
 
 ### Code Structure

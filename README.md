@@ -23,11 +23,25 @@ python run.py
   - Audio Reference (ChatterBox VC) - Use audio samples
   - Model Reference (RVC/Applio) - Use pre-trained models
   
-- 🎵 **Stem Separation** - Isolate vocals from music using Demucs
+- 🎵 **Stem Separation** - Isolate vocals from music using Demucs or MDX23C
 
-- 🔀 **Gender-Aware Conversion** - Automatic pitch adaptation for cross-gender voice conversion
+- 🎚️ **Interactive Spectrum Editor** (Phase 2.6):
+  - **Four Editing Modes**: Pitching, Reverb, Volume, Noise Reduction
+  - **Interactive Tools**: Add/Move/Remove control points with mouse
+  - **Apply Changes**: Preview curve edits before full processing
+  - **Non-destructive Editing**: Always starts from original vocals
+  - **Real-time Visualization**: Waveform display with automation curves
+  
+- 🔀 **Gender-Aware Conversion** - Automatic pitch adaptation with optional curve auto-population
 
 - 🎚️ **Audio Mixing** - Seamlessly recombine converted vocals with original instrumentals
+
+- 🎧 **Dual Audio Preview**:
+  - 6-track preview player (Original Audio, Original Vocals, Reference, Converted Vocals, Final Mix, Instrumental)
+  - Independent volume controls for spectrum editor and preview section
+  - Play/Pause/Seek controls for all tracks
+
+- 💾 **Project Management** - Save/load .vra project files with all settings and curves
 
 ## Documentation
 
