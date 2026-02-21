@@ -292,7 +292,7 @@ class VoiceReplacementService:
                 75,
                 "Mixing audio..."
             )
-            final_mix, err = self._mix_audio(converted_vocals, stems, output_dir)
+            final_mix, err = self._mix_audio(converted_vocals, stems, output_dir, voice_params)
             if err:
                 return None, err, "Audio mixing failed"
             
@@ -620,19 +620,90 @@ class VoiceReplacementService:
         self, 
         converted_vocals: Path, 
         stems: AudioStems,
-        output_dir: Path
+        output_dir: Path,
+        voice_params
     ) -> tuple[Optional[Path], Optional[ErrorCode]]:
-        """Mix audio using AudioMixer"""
+        """Mix audio using AudioMixer, applying instrumental volume curve if present"""
         try:
+            drums_path = stems.drums
+            bass_path = stems.bass
+            other_path = stems.other
+            
+            # Apply instrumental volume curve to each stem if edited
+            if voice_params and voice_params.editing_curves:
+                inst_vol_curve = voice_params.editing_curves.get('instrumental_volume')
+                
+                if inst_vol_curve and hasattr(inst_vol_curve, 'has_edits') and inst_vol_curve.has_edits():
+                    logger.info(f"[INSTRUMENTAL VOLUME] Applying curve to stems ({len(inst_vol_curve.control_points)} control points)")
+                    
+                    # Apply the SAME curve to each instrumental stem
+                    if drums_path and drums_path.exists():
+                        drums_processed = output_dir / "drums_volume_adjusted.wav"
+                        logger.info(f"Applying curve to drums: {drums_path} -> {drums_processed}")
+                        success = self._audio_processor.apply_volume_curve(
+                            drums_path,
+                            drums_processed,
+                            inst_vol_curve
+                        )
+                        if success and drums_processed.exists():
+                            drums_path = drums_processed
+                            logger.info(f"[OK] Drums processed successfully")
+                        else:
+                            logger.warning(f"[WARNING] Failed to process drums, using original")
+                    
+                    if bass_path and bass_path.exists():
+                        bass_processed = output_dir / "bass_volume_adjusted.wav"
+                        logger.info(f"Applying curve to bass: {bass_path} -> {bass_processed}")
+                        success = self._audio_processor.apply_volume_curve(
+                            bass_path,
+                            bass_processed,
+                            inst_vol_curve
+                        )
+                        if success and bass_processed.exists():
+                            bass_path = bass_processed
+                            logger.info(f"[OK] Bass processed successfully")
+                        else:
+                            logger.warning(f"[WARNING] Failed to process bass, using original")
+                    
+                    if other_path and other_path.exists():
+                        other_processed = output_dir / "other_volume_adjusted.wav"
+                        logger.info(f"Applying curve to other: {other_path} -> {other_processed}")
+                        success = self._audio_processor.apply_volume_curve(
+                            other_path,
+                            other_processed,
+                            inst_vol_curve
+                        )
+                        if success and other_processed.exists():
+                            other_path = other_processed
+                            logger.info(f"[OK] Other processed successfully")
+                        else:
+                            logger.warning(f"[WARNING] Failed to process other, using original")
+                else:
+                    logger.info("No instrumental volume curve edits found")
+            else:
+                logger.info("No editing curves provided")
+            
+            # Disable normalization to preserve volume curve adjustments
+            # If instrumental volume was edited, don't normalize as it would undo the changes
+            if voice_params and voice_params.editing_curves:
+                inst_vol_curve = voice_params.editing_curves.get('instrumental_volume')
+                if inst_vol_curve and hasattr(inst_vol_curve, 'has_edits') and inst_vol_curve.has_edits():
+                    logger.info("Disabling mixer normalization to preserve instrumental volume curve")
+                    self._audio_mixer.set_normalize(False)
+                else:
+                    self._audio_mixer.set_normalize(True)
+            else:
+                self._audio_mixer.set_normalize(True)
+            
             # Generate output filename
             output_path = output_dir / "mixed_output.wav"
             
-            # Use AudioMixer
+            # Use AudioMixer with potentially volume-adjusted stems
             result_path, error = self._audio_mixer.mix_simple(
                 vocals_path=converted_vocals,
-                drums_path=stems.drums,
-                bass_path=stems.bass,
-                other_path=stems.other,
+                drums_path=drums_path,
+                bass_path=bass_path,
+                other_path=other_path,
                 output_path=output_path,
                 progress_callback=None
             )

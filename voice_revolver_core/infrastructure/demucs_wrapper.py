@@ -149,7 +149,7 @@ class DemucsWrapper:
             
             for i, stem_name in enumerate(stem_names):
                 stem_wav = sources[i].cpu()
-                stem_path = output_dir / f"{audio_path.stem}_{stem_name}.wav"
+                stem_path = output_dir / f"{stem_name}.wav"
                 torchaudio.save(str(stem_path), stem_wav, self._sample_rate)
                 stems[stem_name] = stem_path
                 logger.info(f"Saved {stem_name}: {stem_path}")

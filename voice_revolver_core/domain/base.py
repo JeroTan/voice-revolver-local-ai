@@ -168,7 +168,7 @@ class ReverbCurve:
 class VolumeControlPoint:
     """Single control point for volume automation"""
     time: float  # Seconds into audio
-    gain_db: float  # Volume adjustment in dB (-20 to +6)
+    gain_db: float  # Volume adjustment in dB (-50 to +50)
 
 
 @dataclass
@@ -198,6 +198,44 @@ class VolumeCurve:
         for pt_data in data.get("control_points", []):
             curve.control_points.append(
                 VolumeControlPoint(time=pt_data["time"], gain_db=pt_data["gain_db"])
+            )
+        return curve
+
+
+@dataclass
+class InstrumentalVolumeControlPoint:
+    """Single control point for instrumental volume automation"""
+    time: float  # Seconds into audio
+    gain_db: float  # Volume adjustment in dB (-50 to +50)
+
+
+@dataclass
+class InstrumentalVolumeCurve:
+    """Instrumental volume automation curve for spectrum editor"""
+    control_points: list = field(default_factory=list)  # List of InstrumentalVolumeControlPoint
+    interpolation: str = "cubic"
+    
+    def has_edits(self) -> bool:
+        """Check if curve has any user edits"""
+        return len(self.control_points) > 0 and any(abs(pt.gain_db) > 0.1 for pt in self.control_points)
+    
+    def to_dict(self) -> dict:
+        """Serialize to dictionary for project save"""
+        return {
+            "control_points": [
+                {"time": pt.time, "gain_db": pt.gain_db}
+                for pt in self.control_points
+            ],
+            "interpolation": self.interpolation
+        }
+    
+    @staticmethod
+    def from_dict(data: dict) -> 'InstrumentalVolumeCurve':
+        """Deserialize from dictionary"""
+        curve = InstrumentalVolumeCurve(interpolation=data.get("interpolation", "cubic"))
+        for pt_data in data.get("control_points", []):
+            curve.control_points.append(
+                InstrumentalVolumeControlPoint(time=pt_data["time"], gain_db=pt_data["gain_db"])
             )
         return curve
 

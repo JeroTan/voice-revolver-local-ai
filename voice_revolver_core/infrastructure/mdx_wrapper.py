@@ -158,10 +158,9 @@ class MDXWrapper:
             vocals_path = Path(result_data["vocals_path"])
             instrumental_path = Path(result_data.get("instrumental_path", ""))
             
-            # Rename to standard format
-            audio_name = audio_path.stem
-            final_vocals = output_dir / f"{audio_name}_vocals.wav"
-            final_other = output_dir / f"{audio_name}_other.wav"
+            # Rename to standard format (using generic names)
+            final_vocals = output_dir / "vocals.wav"
+            final_other = output_dir / "other.wav"
             
             if vocals_path.exists():
                 shutil.move(str(vocals_path), str(final_vocals))
@@ -182,8 +181,8 @@ class MDXWrapper:
             vocals_audio, sr = sf.read(str(final_vocals))
             silence = np.zeros_like(vocals_audio)
             
-            final_drums = output_dir / f"{audio_name}_drums.wav"
-            final_bass = output_dir / f"{audio_name}_bass.wav"
+            final_drums = output_dir / "drums.wav"
+            final_bass = output_dir / "bass.wav"
             
             sf.write(str(final_drums), silence, sr)
             sf.write(str(final_bass), silence, sr)

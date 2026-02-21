@@ -93,30 +93,38 @@ def enhance_vocals(
             logger.error("  .\\venv-enhance\\Scripts\\Activate.ps1")
             logger.error("  pip install resemble-enhance --upgrade")
             if progress_callback:
-                progress_callback("❌ venv-enhance not installed")
+                progress_callback(0, "❌ venv-enhance not installed")
             return False
         
         if progress_callback:
-            progress_callback(f"Starting vocal enhancement (RK4, {nfe} steps)...")
+            progress_callback(0, f"Starting vocal enhancement (RK4, {nfe} steps)...")
         
         logger.info(f"Enhancing vocals: {input_path}")
         logger.info(f"Settings: solver={solver}, nfe={nfe}, temperature={temperature}")
-        logger.info(f"Using venv: {venv_python}")
+        logger.info(f"Using venv: {venv_python}")        
+        
+        # Convert paths to Path objects if they're strings
+        input_path = Path(input_path) if isinstance(input_path, str) else input_path
+        output_path = Path(output_path) if isinstance(output_path, str) else output_path
         
         # Convert paths to absolute strings
         input_str = str(input_path.resolve())
         output_str = str(output_path.resolve())
         
-        # Build command for resemble-enhance CLI
-        # Command: resemble-enhance <input> <output> --solver <solver> --nfe <nfe> --temp <temp>
+        # Path to our helper script
+        script_path = Path(__file__).parent / "enhance_single_file.py"
+        
+        # Build command to run our helper script in venv-enhance
+        # This script uses the Python API directly instead of the broken CLI
         cmd = [
             str(venv_python),
-            "-m", "resemble_enhance.enhancer.inference",
+            str(script_path),
             input_str,
             output_str,
             "--solver", solver,
             "--nfe", str(nfe),
-            "--temp", str(temperature)
+            "--tau", str(temperature),  # Note: API uses 'tau' not 'temp'
+            "--device", "cuda"
         ]
         
         if denoise_first:
@@ -125,7 +133,7 @@ def enhance_vocals(
         logger.info(f"Running command: {' '.join(cmd)}")
         
         if progress_callback:
-            progress_callback("Enhancement running (this may take a few minutes)...")
+            progress_callback(10, "Enhancement running (this may take a few minutes)...")
         
         # Run enhancement in subprocess
         process = subprocess.run(
@@ -141,7 +149,7 @@ def enhance_vocals(
             logger.error(f"STDOUT: {process.stdout}")
             logger.error(f"STDERR: {process.stderr}")
             if progress_callback:
-                progress_callback(f"❌ Enhancement failed: {process.stderr[:100]}")
+                progress_callback(100, f"❌ Enhancement failed: {process.stderr[:100]}")
             return False
         
         # Log output
@@ -152,32 +160,32 @@ def enhance_vocals(
         if not output_path.exists():
             logger.error(f"Enhancement failed: output file not created at {output_path}")
             if progress_callback:
-                progress_callback("❌ Enhancement failed: no output file")
+                progress_callback(100, "❌ Enhancement failed: no output file")
             return False
         
         # Check if output has audio data
         if output_path.stat().st_size == 0:
             logger.error(f"Enhancement failed: output file is empty at {output_path}")
             if progress_callback:
-                progress_callback("❌ Enhancement failed: empty output")
+                progress_callback(100, "❌ Enhancement failed: empty output")
             return False
         
         logger.info(f"Enhancement complete: {output_path}")
         if progress_callback:
-            progress_callback("✓ Vocal enhancement complete")
+            progress_callback(100, "✓ Vocal enhancement complete")
         
         return True
         
     except subprocess.TimeoutExpired:
         logger.error("Enhancement timed out after 10 minutes")
         if progress_callback:
-            progress_callback("❌ Enhancement timed out")
+            progress_callback(100, "❌ Enhancement timed out")
         return False
         
     except Exception as e:
         logger.error(f"Enhancement failed with error: {e}", exc_info=True)
         if progress_callback:
-            progress_callback(f"❌ Enhancement failed: {e}")
+            progress_callback(100, f"❌ Enhancement failed: {e}")
         return False
 
 

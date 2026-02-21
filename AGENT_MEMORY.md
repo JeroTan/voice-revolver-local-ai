@@ -53,7 +53,66 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ---
 
+## Coding Standards
+
+### Logging Best Practices
+- **NEVER use emoji characters in log messages** (🎵, ✅, ⚠️, etc.)
+  - Windows console uses cp1252 encoding which doesn't support Unicode emojis
+  - Causes `UnicodeEncodeError: 'charmap' codec can't encode character` errors
+  - Use ASCII-safe text instead:
+    - `🎵` → `[INSTRUMENTAL VOLUME]` or `[MUSIC]`
+    - `✅` → `[OK]` or `[SUCCESS]`
+    - `⚠️` → `[WARNING]`
+    - `❌` → `[ERROR]` or `[FAILED]`
+- **Example:**
+  ```python
+  # ❌ BAD - Will crash on Windows
+  logger.info(f"🎵 Applying curve to {filename}")
+  
+  # ✅ GOOD - ASCII-safe
+  logger.info(f"[MUSIC] Applying curve to {filename}")
+  ```
+
+---
+
 ## History Log
+
+### 2026-02-22 | Instrumental Volume Curve Integration & Logging Fix
+- **Topic:** Implemented instrumental volume editing in spectrum editor + applied to final mix processing
+- **Feature Request:** User wanted to control instrumental volume separately from vocals in spectrum editor
+- **Implementation:**
+  1. **Domain Models** (base.py):
+     - Added `InstrumentalVolumeControlPoint` (time, gain_db)
+     - Added `InstrumentalVolumeCurve` with interpolation support
+  2. **Spectrum Editor** (spectrum_editor.py):
+     - Added "Instrumental Vol" mode with orange control points
+     - Volume range: -50 to +50 dB (same as vocal volume)
+     - Audio playback switches to instrumental when in this mode
+     - All editing operations support instrumental_volume mode
+  3. **Final Processing Integration** (voice_replacement_service.py):
+     - Apply instrumental volume curve to all stems (drums, bass, other) before mixing
+     - Disable mixer normalization when curve is edited (preserves user adjustments)
+     - Files: `drums_volume_adjusted.wav`, `bass_volume_adjusted.wav`, `other_volume_adjusted.wav`
+- **Critical Bug Found & Fixed:**
+  - **Issue:** Mixer's `normalize()` function was undoing volume curve changes
+  - **Root Cause:** After reducing instrumental to -50 dB, normalization brought it back to full volume
+  - **Solution:** Disable normalization when instrumental_volume curve has edits
+- **Logging Issue Fixed:**
+  - **Problem:** Emoji characters (🎵, ✅, ⚠️) caused `UnicodeEncodeError` on Windows cp1252 console
+  - **Solution:** Replaced all emojis with ASCII-safe text (`[INSTRUMENTAL VOLUME]`, `[OK]`, `[WARNING]`)
+  - **Added:** Coding standard to **NEVER use emojis in logger messages**
+- **Files Modified:**
+  - `voice_revolver_core/domain/base.py` - Added instrumental volume domain models
+  - `voice_revolver_ui/spectrum_editor.py` - New editing mode with UI controls
+  - `voice_revolver_core/application/voice_replacement_service.py` - Apply curve to stems before mixing
+  - `voice_revolver_core/infrastructure/audio_processor.py` - Added debug logging for volume curve
+  - `voice_revolver_core/infrastructure/audio_mixer.py` - `set_normalize()` method used
+- **Testing Results:**
+  - ✅ Instrumental volume curve applied successfully to all 3 stems
+  - ✅ -20.2 dB reduction = 0.0982x linear gain (~10% volume)
+  - ✅ Normalization disabled when curve exists
+  - ✅ Final mix preserves volume adjustments
+  - ✅ No Unicode logging errors
 
 ### 2026-02-21 | Python Environment Standard
 - **Topic:** Virtual environment Python version standardization

@@ -60,6 +60,7 @@ from voice_revolver_core.domain.base import (
     PitchCurve, PitchControlPoint,
     ReverbCurve, ReverbControlPoint,
     VolumeCurve, VolumeControlPoint,
+    InstrumentalVolumeCurve, InstrumentalVolumeControlPoint,
     NoiseCurve, NoiseControlPoint,
     BlendCurve, BlendControlPoint
 )
@@ -96,10 +97,16 @@ class SpectrumEditor(ttk.Frame):
         self.enhanced_audio_data: Optional[np.ndarray] = None
         self.has_enhancement = False  # Flag for blend mode availability
         
-        # Five independent editing curves (Phase 2.7 adds blend)
+        # Instrumental audio for instrumental volume mode
+        self.instrumental_path: Optional[Path] = None
+        self.instrumental_audio_data: Optional[np.ndarray] = None
+        self.has_instrumental = False  # Flag for instrumental volume mode availability
+        
+        # Six independent editing curves (Phase 2.7 adds blend, now adding instrumental_volume)
         self.pitch_curve = PitchCurve()
         self.reverb_curve = ReverbCurve()
         self.volume_curve = VolumeCurve()
+        self.instrumental_volume_curve = InstrumentalVolumeCurve()
         self.noise_curve = NoiseCurve()
         self.blend_curve = BlendCurve()  # Phase 2.7: Blend original vs enhanced vocals
         
@@ -214,6 +221,19 @@ class SpectrumEditor(ttk.Frame):
         remove_btn.pack(pady=3)
         self.tool_buttons["remove"] = remove_btn
         
+        # Reset Mode button
+        self.reset_btn = tk.Button(
+            tool_frame,
+            text="🗑\nReset",
+            font=("Segoe UI", 8),
+            width=6,
+            height=2,
+            relief=tk.RAISED,
+            bd=2,
+            command=self._reset_current_mode
+        )
+        self.reset_btn.pack(pady=3)
+        
         # Volume control (vertical slider below tools)
         ttk.Separator(tool_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         
@@ -309,6 +329,16 @@ class SpectrumEditor(ttk.Frame):
         )
         self.volume_radio.pack(side=tk.LEFT, padx=20)
         
+        self.instrumental_volume_radio = ttk.Radiobutton(
+            button_container,
+            text="Instrumental Vol",
+            value="instrumental_volume",
+            variable=self.mode_var,
+            command=self._switch_mode
+        )
+        self.instrumental_volume_radio.pack(side=tk.LEFT, padx=20)
+        self.instrumental_volume_radio.pack_forget()  # Hidden initially until instrumental loaded
+        
         self.noise_radio = ttk.Radiobutton(
             button_container,
             text="Noise Reduction",
@@ -335,13 +365,14 @@ class SpectrumEditor(ttk.Frame):
         self.canvas.mpl_connect('button_release_event', self._on_release)
         self.canvas.mpl_connect('motion_notify_event', self._on_hover)
     
-    def load_vocals(self, vocal_path: Path, initial_pitch_shift: float = 0, enhanced_vocal_path: Optional[Path] = None):
+    def load_vocals(self, vocal_path: Path, initial_pitch_shift: float = 0, enhanced_vocal_path: Optional[Path] = None, instrumental_path: Optional[Path] = None):
         """Load separated vocals and display spectrum
         
         Args:
             vocal_path: Path to original vocal audio file
             initial_pitch_shift: Initial pitch shift in semitones (from gender alignment)
             enhanced_vocal_path: Optional path to enhanced vocal audio file (Phase 2.7)
+            instrumental_path: Optional path to instrumental audio file (for instrumental volume mode)
         """
         try:
             logger.info(f"Loading vocals for spectrum editor: {vocal_path}")
@@ -384,17 +415,55 @@ class SpectrumEditor(ttk.Frame):
                     
                     self.enhanced_vocal_path = enhanced_vocal_path
                     self.has_enhancement = True
-                    logger.info(f"✓ Enhanced vocals loaded ({len(self.enhanced_audio_data)} samples)")
+                    logger.info(f"Enhanced vocals loaded ({len(self.enhanced_audio_data)} samples)")
                     
                 except Exception as e:
                     logger.error(f"Failed to load enhanced vocals: {e}")
                     self.has_enhancement = False
             
+            # Load instrumental audio if provided (for instrumental volume mode)
+            self.instrumental_path = None
+            self.instrumental_audio_data = None
+            self.has_instrumental = False
+            
+            if instrumental_path and instrumental_path.exists():
+                try:
+                    logger.info(f"Loading instrumental audio: {instrumental_path}")
+                    self.instrumental_audio_data, inst_sr = librosa.load(str(instrumental_path), sr=None, mono=True)
+                    
+                    # Verify sample rates match
+                    if inst_sr != self.sample_rate:
+                        logger.warning(f"Sample rate mismatch: {self.sample_rate}Hz vs {inst_sr}Hz, resampling instrumental...")
+                        self.instrumental_audio_data = librosa.resample(
+                            self.instrumental_audio_data, 
+                            orig_sr=inst_sr, 
+                            target_sr=self.sample_rate
+                        )
+                    
+                    # Ensure same length (pad or trim)
+                    if len(self.instrumental_audio_data) < len(self.audio_data):
+                        # Pad with zeros
+                        padding = len(self.audio_data) - len(self.instrumental_audio_data)
+                        self.instrumental_audio_data = np.pad(self.instrumental_audio_data, (0, padding))
+                    elif len(self.instrumental_audio_data) > len(self.audio_data):
+                        # Trim to match
+                        self.instrumental_audio_data = self.instrumental_audio_data[:len(self.audio_data)]
+                    
+                    self.instrumental_path = instrumental_path
+                    self.has_instrumental = True
+                    logger.info(f"Instrumental audio loaded ({len(self.instrumental_audio_data)} samples)")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to load instrumental audio: {e}")
+                    self.has_instrumental = False
+            
             # Initialize curves with optional pre-populated values
             self.pitch_curve = PitchCurve()
             self.reverb_curve = ReverbCurve()
             self.volume_curve = VolumeCurve()
+            self.instrumental_volume_curve = InstrumentalVolumeCurve()
             self.noise_curve = NoiseCurve()
+            self.blend_curve = BlendCurve()
             
             # Import control point classes
             from voice_revolver_core.domain.base import PitchControlPoint
@@ -413,9 +482,16 @@ class SpectrumEditor(ttk.Frame):
             # Show/hide blend mode button based on enhancement availability (Phase 2.7)
             if self.has_enhancement:
                 self.blend_radio.pack(side=tk.LEFT, padx=20)
-                logger.info("✓ Blend mode available (enhanced vocals loaded)")
+                logger.info("Blend mode available (enhanced vocals loaded)")
             else:
                 self.blend_radio.pack_forget()
+            
+            # Show/hide instrumental volume button based on instrumental availability
+            if self.has_instrumental:
+                self.instrumental_volume_radio.pack(side=tk.LEFT, padx=20)
+                logger.info("Instrumental Volume mode available (instrumental audio loaded)")
+            else:
+                self.instrumental_volume_radio.pack_forget()
             
             # Enable playback controls
             if PYGAME_AVAILABLE:
@@ -453,6 +529,45 @@ class SpectrumEditor(ttk.Frame):
             logger.error(f"Failed to reload audio: {e}")
             self._show_error(f"Failed to reload audio:\n{str(e)}")
     
+    def reload_instrumental_only(self, instrumental_path: Path):
+        """Reload instrumental audio file without resetting curves (for preview updates)"""
+        try:
+            logger.info(f"Reloading instrumental (preserving curves): {instrumental_path}")
+            
+            self.instrumental_path = instrumental_path
+            
+            # Reload instrumental audio with librosa
+            self.instrumental_audio_data, inst_sr = librosa.load(str(instrumental_path), sr=None, mono=True)
+            
+            # Verify sample rates match
+            if inst_sr != self.sample_rate:
+                logger.warning(f"Sample rate mismatch: {self.sample_rate}Hz vs {inst_sr}Hz, resampling instrumental...")
+                self.instrumental_audio_data = librosa.resample(
+                    self.instrumental_audio_data, 
+                    orig_sr=inst_sr, 
+                    target_sr=self.sample_rate
+                )
+            
+            # Ensure same length (pad or trim)
+            if len(self.instrumental_audio_data) < len(self.audio_data):
+                # Pad with zeros
+                padding = len(self.audio_data) - len(self.instrumental_audio_data)
+                self.instrumental_audio_data = np.pad(self.instrumental_audio_data, (0, padding))
+            elif len(self.instrumental_audio_data) > len(self.audio_data):
+                # Trim to match
+                self.instrumental_audio_data = self.instrumental_audio_data[:len(self.audio_data)]
+            
+            self.has_instrumental = True
+            logger.info(f"Reloaded instrumental audio: {len(self.instrumental_audio_data)} samples (curves preserved)")
+            
+            # Redraw if in instrumental volume mode
+            if self.current_mode == "instrumental_volume":
+                self._redraw_spectrum()
+            
+        except Exception as e:
+            logger.error(f"Failed to reload instrumental: {e}")
+            self._show_error(f"Failed to reload instrumental:\n{str(e)}")
+    
     def release_audio_file(self):
         """Release audio file handles (stop playback and unload mixer)"""
         try:
@@ -472,8 +587,33 @@ class SpectrumEditor(ttk.Frame):
     
     def _switch_mode(self):
         """Switch editing mode and redraw visualization"""
+        old_mode = self.current_mode
         self.current_mode = self.mode_var.get()
         logger.info(f"Switched to {self.current_mode} mode")
+        
+        # If switching to/from instrumental_volume mode while playing, restart with correct audio
+        if PYGAME_AVAILABLE and self.is_playing:
+            mode_changed_audio = (
+                (old_mode == "instrumental_volume" and self.current_mode != "instrumental_volume") or
+                (old_mode != "instrumental_volume" and self.current_mode == "instrumental_volume")
+            )
+            if mode_changed_audio:
+                # Stop and restart with correct audio file
+                was_playing_position = self.playback_position
+                mixer.music.stop()
+                
+                # Determine which audio file to play
+                audio_file = self.vocal_path
+                if self.current_mode == "instrumental_volume" and self.has_instrumental and self.instrumental_path:
+                    audio_file = self.instrumental_path
+                
+                # Reload and play from same position
+                if audio_file:
+                    mixer.music.load(str(audio_file))
+                    mixer.music.play(start=was_playing_position)
+                    # Apply volume from slider
+                    mixer.music.set_volume(self.volume_var.get())
+                    logger.info(f"Switched playback to {audio_file.name}")
         
         if self.audio_data is not None:
             self._redraw_spectrum()
@@ -525,6 +665,8 @@ class SpectrumEditor(ttk.Frame):
                 self._draw_reverb_view()
             elif self.current_mode == "volume":
                 self._draw_volume_view()
+            elif self.current_mode == "instrumental_volume":
+                self._draw_instrumental_volume_view()
             elif self.current_mode == "noise":
                 self._draw_noise_view()
         
@@ -612,7 +754,7 @@ class SpectrumEditor(ttk.Frame):
         """Draw volume automation editing view"""
         self.ax.set_ylabel("Volume Adjustment (dB)")
         self.ax.set_title("Volume Automation (Click to add points)")
-        self.ax.set_ylim(-20, 6)
+        self.ax.set_ylim(-50, 50)
         
         # Draw zero line (unity gain)
         self.ax.axhline(0, color='gray', linestyle='--', linewidth=1, alpha=0.5, label='0dB (Unity)')
@@ -628,6 +770,27 @@ class SpectrumEditor(ttk.Frame):
             # Draw straight lines between points (actual processing handles interpolation)
             if len(times) >= 2:
                 self.ax.plot(times, gains, color='green', linewidth=2, label='Volume Curve', marker='o', markersize=8)
+    
+    def _draw_instrumental_volume_view(self):
+        """Draw instrumental volume automation editing view"""
+        self.ax.set_ylabel("Instrumental Volume (dB)")
+        self.ax.set_title("Instrumental Volume Automation (Click to add points)")
+        self.ax.set_ylim(-50, 50)
+        
+        # Draw zero line (unity gain)
+        self.ax.axhline(0, color='gray', linestyle='--', linewidth=1, alpha=0.5, label='0dB (Unity)')
+        
+        # Plot existing control points and curve
+        if len(self.instrumental_volume_curve.control_points) > 0:
+            times = [pt.time for pt in self.instrumental_volume_curve.control_points]
+            gains = [pt.gain_db for pt in self.instrumental_volume_curve.control_points]
+            
+            # Plot control points
+            self.ax.scatter(times, gains, color='orange', s=100, zorder=5, label='Control Points')
+            
+            # Draw straight lines between points
+            if len(times) >= 2:
+                self.ax.plot(times, gains, color='orange', linewidth=2, label='Instrumental Volume Curve', marker='o', markersize=8)
     
     def _draw_noise_view(self):
         """Draw noise reduction editing view"""
@@ -662,11 +825,18 @@ class SpectrumEditor(ttk.Frame):
         
         # Downsample for performance
         hop_length = max(1, len(self.audio_data) // 2000)
-        times = np.arange(0, len(self.audio_data), hop_length) / self.sample_rate
         
-        # Normalize both waveforms to 0-100% range for visualization
+        # Sample both waveforms - ensure they have the same length
         original_samples = self.audio_data[::hop_length]
         enhanced_samples = self.enhanced_audio_data[::hop_length]
+        
+        # Ensure both arrays have the same length (trim to shorter one)
+        min_length = min(len(original_samples), len(enhanced_samples))
+        original_samples = original_samples[:min_length]
+        enhanced_samples = enhanced_samples[:min_length]
+        
+        # Create time axis matching the sample length
+        times = np.arange(min_length) * hop_length / self.sample_rate
         
         # Normalize to 0-100 (map [-1, 1] audio range to [0, 100] percentage)
         original_norm = ((original_samples + 1) / 2) * 100
@@ -750,13 +920,21 @@ class SpectrumEditor(ttk.Frame):
             self.reverb_curve.control_points[point_index].time = new_time
             self.reverb_curve.control_points[point_index].wet_percent = new_value
         elif curve_type == "volume":
-            new_value = max(-20, min(6, new_value))
+            new_value = max(-50, min(50, new_value))
             self.volume_curve.control_points[point_index].time = new_time
             self.volume_curve.control_points[point_index].gain_db = new_value
+        elif curve_type == "instrumental_volume":
+            new_value = max(-50, min(50, new_value))
+            self.instrumental_volume_curve.control_points[point_index].time = new_time
+            self.instrumental_volume_curve.control_points[point_index].gain_db = new_value
         elif curve_type == "noise":
             new_value = max(0, min(100, new_value))
             self.noise_curve.control_points[point_index].time = new_time
             self.noise_curve.control_points[point_index].reduction_percent = new_value
+        elif curve_type == "blend":
+            new_value = max(0, min(100, new_value))
+            self.blend_curve.control_points[point_index].time = new_time
+            self.blend_curve.control_points[point_index].enhanced_percent = new_value
         
         # Redraw
         self._redraw_spectrum()
@@ -772,8 +950,12 @@ class SpectrumEditor(ttk.Frame):
                 self.reverb_curve.control_points.sort(key=lambda pt: pt.time)
             elif curve_type == "volume":
                 self.volume_curve.control_points.sort(key=lambda pt: pt.time)
+            elif curve_type == "instrumental_volume":
+                self.instrumental_volume_curve.control_points.sort(key=lambda pt: pt.time)
             elif curve_type == "noise":
                 self.noise_curve.control_points.sort(key=lambda pt: pt.time)
+            elif curve_type == "blend":
+                self.blend_curve.control_points.sort(key=lambda pt: pt.time)
             
             self.dragging_point = None
             self._redraw_spectrum()
@@ -804,12 +986,20 @@ class SpectrumEditor(ttk.Frame):
             label_text = f"Reverb: {reverb:.0f}%"
         elif self.current_mode == "volume":
             # Clamp to volume range
-            volume = max(-20, min(6, ydata))
+            volume = max(-50, min(50, ydata))
             label_text = f"Volume: {volume:+.1f} dB"
+        elif self.current_mode == "instrumental_volume":
+            # Clamp to instrumental volume range
+            inst_vol = max(-50, min(50, ydata))
+            label_text = f"Instrumental: {inst_vol:+.1f} dB"
         elif self.current_mode == "noise":
             # Clamp to noise reduction range
             noise = max(0, min(100, ydata))
             label_text = f"Noise Reduction: {noise:.0f}%"
+        elif self.current_mode == "blend":
+            # Clamp to blend range
+            blend = max(0, min(100, ydata))
+            label_text = f"Enhanced: {blend:.0f}%"
         else:
             return
         
@@ -853,6 +1043,10 @@ class SpectrumEditor(ttk.Frame):
             for i, pt in enumerate(self.volume_curve.control_points):
                 if abs(pt.time - time) < threshold_time and abs(pt.gain_db - value) < threshold_value:
                     return ("volume", i)
+        elif self.current_mode == "instrumental_volume":
+            for i, pt in enumerate(self.instrumental_volume_curve.control_points):
+                if abs(pt.time - time) < threshold_time and abs(pt.gain_db - value) < threshold_value:
+                    return ("instrumental_volume", i)
         elif self.current_mode == "noise":
             threshold_value = 10.0  # 10% for noise reduction
             for i, pt in enumerate(self.noise_curve.control_points):
@@ -877,9 +1071,13 @@ class SpectrumEditor(ttk.Frame):
             self.reverb_curve.control_points.append(ReverbControlPoint(time, value))
             self.reverb_curve.control_points.sort(key=lambda pt: pt.time)
         elif self.current_mode == "volume":
-            value = max(-20, min(6, value))
+            value = max(-50, min(50, value))
             self.volume_curve.control_points.append(VolumeControlPoint(time, value))
             self.volume_curve.control_points.sort(key=lambda pt: pt.time)
+        elif self.current_mode == "instrumental_volume":
+            value = max(-50, min(50, value))
+            self.instrumental_volume_curve.control_points.append(InstrumentalVolumeControlPoint(time, value))
+            self.instrumental_volume_curve.control_points.sort(key=lambda pt: pt.time)
         elif self.current_mode == "noise":
             value = max(0, min(100, value))
             self.noise_curve.control_points.append(NoiseControlPoint(time, value))
@@ -905,6 +1103,9 @@ class SpectrumEditor(ttk.Frame):
         elif curve_type == "volume" and point_index < len(self.volume_curve.control_points):
             removed = self.volume_curve.control_points.pop(point_index)
             logger.info(f"Removed volume control point at {removed.time:.2f}s")
+        elif curve_type == "instrumental_volume" and point_index < len(self.instrumental_volume_curve.control_points):
+            removed = self.instrumental_volume_curve.control_points.pop(point_index)
+            logger.info(f"Removed instrumental volume control point at {removed.time:.2f}s")
         elif curve_type == "noise" and point_index < len(self.noise_curve.control_points):
             removed = self.noise_curve.control_points.pop(point_index)
             logger.info(f"Removed noise control point at {removed.time:.2f}s")
@@ -913,11 +1114,12 @@ class SpectrumEditor(ttk.Frame):
             logger.info(f"Removed blend control point at {removed.time:.2f}s")
     
     def get_all_curves(self) -> dict:
-        """Return all editing curves for processing (Phase 2.7: includes blend)"""
+        """Return all editing curves for processing (includes blend and instrumental_volume)"""
         return {
             'pitch': self.pitch_curve,
             'reverb': self.reverb_curve,
             'volume': self.volume_curve,
+            'instrumental_volume': self.instrumental_volume_curve,
             'noise': self.noise_curve,
             'blend': self.blend_curve
         }
@@ -930,6 +1132,8 @@ class SpectrumEditor(ttk.Frame):
             self.reverb_curve = ReverbCurve()
         elif self.current_mode == "volume":
             self.volume_curve = VolumeCurve()
+        elif self.current_mode == "instrumental_volume":
+            self.instrumental_volume_curve = InstrumentalVolumeCurve()
         elif self.current_mode == "noise":
             self.noise_curve = NoiseCurve()
         elif self.current_mode == "blend":
@@ -939,10 +1143,11 @@ class SpectrumEditor(ttk.Frame):
         self._redraw_spectrum()
     
     def reset_all_curves(self):
-        """Reset all curves to defaults (Phase 2.7: includes blend)"""
+        """Reset all curves to defaults (includes blend and instrumental_volume)"""
         self.pitch_curve = PitchCurve()
         self.reverb_curve = ReverbCurve()
         self.volume_curve = VolumeCurve()
+        self.instrumental_volume_curve = InstrumentalVolumeCurve()
         self.noise_curve = NoiseCurve()
         self.blend_curve = BlendCurve()
         
@@ -964,6 +1169,30 @@ class SpectrumEditor(ttk.Frame):
             self.apply_changes_callback()
         else:
             logger.warning("No apply changes callback set")
+    
+    def _reset_current_mode(self):
+        """Clear all control points for the current mode"""
+        if self.current_mode == "pitching":
+            self.pitch_curve.control_points.clear()
+            logger.info("Reset pitch curve")
+        elif self.current_mode == "reverb":
+            self.reverb_curve.control_points.clear()
+            logger.info("Reset reverb curve")
+        elif self.current_mode == "volume":
+            self.volume_curve.control_points.clear()
+            logger.info("Reset volume curve")
+        elif self.current_mode == "instrumental_volume":
+            self.instrumental_volume_curve.control_points.clear()
+            logger.info("Reset instrumental volume curve")
+        elif self.current_mode == "noise":
+            self.noise_curve.control_points.clear()
+            logger.info("Reset noise curve")
+        elif self.current_mode == "blend":
+            self.blend_curve.control_points.clear()
+            logger.info("Reset blend curve")
+        
+        # Redraw spectrum
+        self._redraw_spectrum()
     
     def _on_volume_change(self, value):
         """Handle volume slider changes"""
@@ -1019,14 +1248,24 @@ class SpectrumEditor(ttk.Frame):
     
     def _play_audio(self):
         """Play audio from current position"""
-        if not PYGAME_AVAILABLE or not self.vocal_path:
+        if not PYGAME_AVAILABLE:
+            return
+        
+        # Determine which audio file to play based on current mode
+        audio_file = self.vocal_path
+        if self.current_mode == "instrumental_volume" and self.has_instrumental and self.instrumental_path:
+            audio_file = self.instrumental_path
+        
+        if not audio_file:
             return
         
         try:
             if not self.is_playing:
                 # Load and play from current position
-                mixer.music.load(str(self.vocal_path))
+                mixer.music.load(str(audio_file))
                 mixer.music.play(start=self.playback_position)
+                # Apply volume from slider
+                mixer.music.set_volume(self.volume_var.get())
                 self.is_playing = True
                 
                 # Update button states
@@ -1114,8 +1353,14 @@ class SpectrumEditor(ttk.Frame):
                 # Seek during playback - restart from new position
                 self.playback_position = position
                 mixer.music.stop()
-                mixer.music.load(str(self.vocal_path))
+                # Use appropriate audio file based on current mode
+                audio_file = self.vocal_path
+                if self.current_mode == "instrumental_volume" and self.has_instrumental and self.instrumental_path:
+                    audio_file = self.instrumental_path
+                mixer.music.load(str(audio_file))
                 mixer.music.play(start=self.playback_position)
+                # Apply volume from slider
+                mixer.music.set_volume(self.volume_var.get())
                 self._update_time_label()
                 # Don't update marker during playback - causes jitter
         except Exception as e:

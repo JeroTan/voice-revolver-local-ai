@@ -690,9 +690,14 @@ class AudioProcessor:
             
             logger.info(f"Applying volume curve ({len(volume_curve.control_points)} control points)")
             
+            # Log control points for debugging
+            for i, pt in enumerate(volume_curve.control_points):
+                logger.info(f"  Control Point {i+1}: time={pt.time:.2f}s, gain={pt.gain_db:+.1f} dB")
+            
             # Load audio
             audio, sr = librosa.load(str(audio_path), sr=None, mono=True)
             duration = len(audio) / sr
+            logger.info(f"  Audio duration: {duration:.2f}s, sample rate: {sr} Hz")
             
             # Create time points for each audio sample
             time_points = np.arange(len(audio)) / sr
@@ -700,11 +705,13 @@ class AudioProcessor:
             # Sample the volume curve at each time point
             curve_times = np.array([p.time for p in volume_curve.control_points])
             curve_gains_db = np.array([p.gain_db for p in volume_curve.control_points])
+            logger.info(f"  Gain dB range: min={curve_gains_db.min():+.1f} dB, max={curve_gains_db.max():+.1f} dB")
             
             # Use cubic spline for smooth interpolation
             from scipy.interpolate import interp1d, CubicSpline
             if len(curve_times) == 1:
                 # Single point: constant gain
+                logger.info(f"  Single control point mode: applying constant gain of {curve_gains_db[0]:+.1f} dB")
                 gain_db_values = np.full(len(time_points), curve_gains_db[0])
             elif len(curve_times) == 2:
                 # Two points: use linear interpolation (cubic needs 3+ points)
@@ -728,9 +735,13 @@ class AudioProcessor:
             
             # Convert dB to linear gain: linear_gain = 10^(dB/20)
             linear_gains = 10.0 ** (gain_db_values / 20.0)
+            logger.info(f"  Linear gain range: min={linear_gains.min():.4f}x, max={linear_gains.max():.4f}x")
             
             # Apply gain curve to audio
+            original_peak = np.abs(audio).max()
             audio_processed = audio * linear_gains
+            processed_peak = np.abs(audio_processed).max()
+            logger.info(f"  Audio peak: before={original_peak:.4f}, after={processed_peak:.4f} (ratio={processed_peak/original_peak if original_peak > 0 else 0:.4f}x)")
             
             # Prevent clipping
             max_val = np.abs(audio_processed).max()

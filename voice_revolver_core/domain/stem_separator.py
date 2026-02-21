@@ -46,12 +46,12 @@ class StemSeparator:
         return True, None
     
     def get_required_output_names(self, base_name: str) -> dict:
-        """Get expected output file names"""
+        """Get expected output file names (using generic names)"""
         return {
-            'vocals': f"{base_name}_vocals.wav",
-            'drums': f"{base_name}_drums.wav",
-            'bass': f"{base_name}_bass.wav",
-            'other': f"{base_name}_other.wav"
+            'vocals': "vocals.wav",
+            'drums': "drums.wav",
+            'bass': "bass.wav",
+            'other': "other.wav"
         }
     
     def set_model_loaded(self, loaded: bool = True):

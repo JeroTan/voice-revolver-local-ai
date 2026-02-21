@@ -483,8 +483,12 @@ class VoiceRevolverApp:
         separation_model_combo = ttk.Combobox(left_top_frame, textvariable=self.separation_model_var,
                                               values=["demucs", "mdx"], state="readonly", width=15)
         separation_model_combo.grid(row=file_row, column=1, sticky=tk.W, padx=5)
-        ttk.Label(left_top_frame, text="MDX=Best", foreground="gray", font=("Segoe UI", 8)).grid(
-            row=file_row, column=2, sticky=tk.W)
+        
+        # Separation model hint
+        file_row += 1
+        ttk.Label(left_top_frame, text="(Demucs=balanced, MDX=best vocal isolation)", 
+                 foreground="gray", font=("Segoe UI", 8)).grid(
+            row=file_row, column=0, columnspan=3, sticky=tk.W, padx=(20, 0))
         
         # Device selection
         file_row += 1
@@ -832,6 +836,20 @@ class VoiceRevolverApp:
             self.log(f"Processing: {Path(self.original_file).name}")
             
             output_dir = self.file_manager.temp_dir / "separation"
+            
+            # Clean up old wav files (except cached enhanced vocals)
+            if output_dir.exists():
+                for wav_file in output_dir.glob("*.wav"):
+                    # Keep enhanced vocals cache
+                    if wav_file.name == "vocals_enhanced.wav":
+                        self.log(f"Preserving cached enhanced vocals")
+                        continue
+                    try:
+                        wav_file.unlink()
+                    except Exception as e:
+                        self.log(f"Warning: Could not delete {wav_file.name}: {e}")
+                self.log("Cleaned up old separation files")
+            
             output_dir.mkdir(exist_ok=True, parents=True)
             
             stems_dict, error = separator.separate(
@@ -907,41 +925,53 @@ class VoiceRevolverApp:
             
             # 4. Enhance vocals using Resemble Enhance if requested (Phase 2.7)
             enhanced_vocals_path = None
+            cached_enhanced_path = output_dir / "vocals_enhanced.wav"
+            
             if self.improve_vocals_var.get() and is_resemble_enhance_available():
-                try:
-                    progress_cb(75, "Enhancing vocals (AI-powered)...")
-                    self.log("→ Starting vocal enhancement (Resemble Enhance, RK4 solver)...")
-                    
-                    # Create output path
-                    enhanced_vocals_path = output_dir / "vocals_enhanced.wav"
-                    
-                    # Progress tracking for enhancement
-                    def enhance_progress_cb(percent, msg):
-                        # Map 0-100% of enhancement to 75-85% overall progress
-                        overall_percent = 75 + (percent * 0.10)
-                        progress_cb(overall_percent, f"Enhancing: {msg}")
-                    
-                    # Run enhancement (fixed settings: RK4, 100 steps, 0.33 temp, no denoise)
-                    success = enhance_vocals(
-                        input_path=str(stems.vocals),
-                        output_path=str(enhanced_vocals_path),
-                        solver="rk4",
-                        nfe=100,
-                        temperature=0.33,
-                        denoise_first=False,
-                        progress_callback=enhance_progress_cb
-                    )
-                    
-                    if success and enhanced_vocals_path.exists():
-                        self.log(f"✓ Vocal enhancement complete: {enhanced_vocals_path}")
-                    else:
-                        self.log("⚠ Enhancement failed, using original vocals")
-                        enhanced_vocals_path = None
+                # Check if cached enhanced vocals exist
+                if cached_enhanced_path.exists():
+                    self.log(f"✓ Using cached enhanced vocals: {cached_enhanced_path.name}")
+                    enhanced_vocals_path = cached_enhanced_path
+                else:
+                    # Run enhancement
+                    try:
+                        progress_cb(75, "Enhancing vocals (AI-powered)...")
+                        self.log("→ Starting vocal enhancement (Resemble Enhance, RK4 solver)...")
                         
-                except Exception as e:
-                    self.log(f"⚠ Enhancement error: {e}")
-                    self.log("Using original vocals instead")
-                    enhanced_vocals_path = None
+                        # Create output path with source filename
+                        enhanced_vocals_path = cached_enhanced_path
+                        
+                        # Progress tracking for enhancement
+                        def enhance_progress_cb(percent, msg):
+                            # Map 0-100% of enhancement to 75-85% overall progress
+                            overall_percent = 75 + (percent * 0.10)
+                            progress_cb(overall_percent, f"Enhancing: {msg}")
+                        
+                        # Run enhancement (fixed settings: RK4, 100 steps, 0.33 temp, no denoise)
+                        success = enhance_vocals(
+                            input_path=str(stems.vocals),
+                            output_path=str(enhanced_vocals_path),
+                            solver="rk4",
+                            nfe=100,
+                            temperature=0.33,
+                            denoise_first=False,
+                            progress_callback=enhance_progress_cb
+                        )
+                        
+                        if success and enhanced_vocals_path.exists():
+                            self.log(f"✓ Vocal enhancement complete: {enhanced_vocals_path.name}")
+                        else:
+                            self.log("⚠ Enhancement failed, using original vocals")
+                            enhanced_vocals_path = None
+                            
+                    except Exception as e:
+                        self.log(f"⚠ Enhancement error: {e}")
+                        self.log("Using original vocals instead")
+                        enhanced_vocals_path = None
+            elif cached_enhanced_path.exists():
+                # Enhancement not requested but cached version exists - use it anyway
+                self.log(f"ℹ Found cached enhanced vocals: {cached_enhanced_path.name}")
+                enhanced_vocals_path = cached_enhanced_path
             
             progress_cb(85, "Loading vocals into spectrum editor...")
             
@@ -972,7 +1002,8 @@ class VoiceRevolverApp:
             self.spectrum_editor.load_vocals(
                 vocals_path,
                 initial_pitch_shift=initial_pitch_shift,
-                enhanced_vocal_path=enhanced_vocals_path
+                enhanced_vocal_path=enhanced_vocals_path,
+                instrumental_path=self.instrumental_path if hasattr(self, 'instrumental_path') else None
             )
             
             #Set flags
@@ -1048,7 +1079,8 @@ class VoiceRevolverApp:
         
         has_any_edits = (curves['pitch'].has_edits() or 
                         curves['reverb'].has_edits() or 
-                        curves['volume'].has_edits())
+                        curves['volume'].has_edits() or
+                        curves['instrumental_volume'].has_edits())
         
         if not has_any_edits:
             self.log("ℹ No curve edits - reloading original vocals")
@@ -1059,6 +1091,8 @@ class VoiceRevolverApp:
                 self.log(f"• Reverb curve: {len(curves['reverb'].control_points)} points")
             if curves['volume'].has_edits():
                 self.log(f"• Volume curve: {len(curves['volume'].control_points)} points")
+            if curves['instrumental_volume'].has_edits():
+                self.log(f"• Instrumental Volume curve: {len(curves['instrumental_volume'].control_points)} points (applies during final mix)")
         
         # Disable UI during processing
         self.spectrum_editor.set_enabled(False)
@@ -1188,8 +1222,31 @@ class VoiceRevolverApp:
                 
                 shutil.copy(str(current_audio), str(final_preview))
             
+            # Process instrumental volume curve if present
+            instrumental_preview = None
+            if curves['instrumental_volume'].has_edits() and hasattr(self, 'instrumental_path') and self.instrumental_path:
+                # Ensure instrumental_path is a Path object
+                from pathlib import Path
+                inst_path = Path(self.instrumental_path) if isinstance(self.instrumental_path, str) else self.instrumental_path
+                
+                if inst_path.exists():
+                    self.root.after(0, self._update_progress, 95, "Applying instrumental volume curve...")
+                    self.root.after(0, self.log, "→ Applying instrumental volume curve...")
+                    
+                    instrumental_preview = preview_dir / "instrumental_preview.wav"
+                    success = processor.apply_volume_curve(
+                        inst_path,
+                        instrumental_preview,
+                        curves['instrumental_volume']
+                    )
+                    if success and instrumental_preview.exists():
+                        self.root.after(0, self.log, "  ✓ Instrumental volume curve applied")
+                    else:
+                        self.root.after(0, self.log, "  ⚠ Failed to apply instrumental volume curve")
+                        instrumental_preview = None
+            
             # Success - reload in spectrum editor (preserving curves)
-            self.root.after(0, self._curves_applied_callback, final_preview)
+            self.root.after(0, self._curves_applied_callback, final_preview, instrumental_preview)
             
         except Exception as e:
             error_msg = f"Failed to apply curves: {str(e)}"
@@ -1197,11 +1254,16 @@ class VoiceRevolverApp:
             logger.error(traceback.format_exc())
             self.root.after(0, self._curves_apply_failed_callback, error_msg)
     
-    def _curves_applied_callback(self, processed_audio_path):
+    def _curves_applied_callback(self, processed_audio_path, instrumental_preview_path=None):
         """UI callback when curves are successfully applied"""
         try:
             # Reload processed audio WITHOUT resetting curves
             self.spectrum_editor.reload_audio_only(processed_audio_path)
+            
+            # Reload processed instrumental if available
+            if instrumental_preview_path and instrumental_preview_path.exists():
+                self.spectrum_editor.reload_instrumental_only(instrumental_preview_path)
+                self.log("  ✓ Instrumental preview updated")
             
             # Re-enable spectrum editor
             self.spectrum_editor.set_enabled(True)
@@ -1546,6 +1608,8 @@ class VoiceRevolverApp:
             self.log(f"Using custom reverb curve ({len(self.editing_curves['reverb'].control_points)} points)")
         if self.editing_curves['volume'].has_edits():
             self.log(f"Using custom volume curve ({len(self.editing_curves['volume'].control_points)} points)")
+        if self.editing_curves['instrumental_volume'].has_edits():
+            self.log(f"Using custom instrumental volume curve ({len(self.editing_curves['instrumental_volume'].control_points)} points)")
         
         self.log("=" * 60)
         
@@ -1867,7 +1931,7 @@ class VoiceRevolverApp:
             if instrumental:
                 instrumental_path = temp_dir / "instrumental_only.wav"
                 instrumental.export(str(instrumental_path), format="wav")
-                self.instrumental_path = str(instrumental_path)
+                self.instrumental_path = instrumental_path  # Keep as Path object
                 self.log("✓ Created instrumental track")
             else:
                 self.log("⚠ Could not create instrumental track")
