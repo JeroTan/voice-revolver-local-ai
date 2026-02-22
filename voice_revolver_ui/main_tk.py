@@ -43,267 +43,12 @@ from voice_revolver_core.domain.file_manager import FileManager
 from voice_revolver_core.domain.progress_tracker import ProgressTracker
 from voice_revolver_core.domain.base import VoiceConversionParams, AudioStems
 
+# UI Components
+from voice_revolver_ui.features.startup_dialog import StartupDialog
+from voice_revolver_ui.features.loading_dialog import LoadingDialog
+from voice_revolver_ui.features.menu_bar import MenuBar
+
 logger = logging.getLogger(__name__)
-
-
-class StartupDialog:
-    """Device selection dialog"""
-    
-    def __init__(self):
-        self.selected_device = "cpu"
-        self.result = None
-        
-        self.window = tk.Tk()
-        self.window.title("Voice Revolver AI - Setup")
-        
-        # Center window on screen
-        window_width = 500
-        window_height = 500
-        screen_width = self.window.winfo_screenwidth()
-        screen_height = self.window.winfo_screenheight()
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        self.window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        self.window.resizable(False, False)
-        
-        self._build_ui()
-        
-        # Detect hardware after UI is built
-        self.window.after(100, self._detect_hardware)
-    
-    def _build_ui(self):
-        """Build startup UI"""
-        main_frame = ttk.Frame(self.window, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title
-        title = ttk.Label(main_frame, text="Voice Revolver AI", font=("Arial", 16, "bold"))
-        title.pack(pady=(0, 10))
-        
-        subtitle = ttk.Label(main_frame, text="Local Voice Replacement", font=("Arial", 10))
-        subtitle.pack(pady=(0, 20))
-        
-        # System Info
-        info_frame = ttk.LabelFrame(main_frame, text="System Information", padding="10")
-        info_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        self.gpu_label = ttk.Label(info_frame, text="GPU: Detecting...")
-        self.gpu_label.pack(anchor=tk.W, pady=2)
-        
-        self.cpu_label = ttk.Label(info_frame, text="CPU: Available")
-        self.cpu_label.pack(anchor=tk.W, pady=2)
-        
-        # Device Selection
-        select_frame = ttk.LabelFrame(main_frame, text="Select Processing Device", padding="10")
-        select_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        self.device_selection = tk.StringVar(value="cpu")
-        
-        self.gpu_radio = ttk.Radiobutton(select_frame, text="GPU (Detecting...)", 
-                                         variable=self.device_selection, value="cuda",
-                                         command=lambda: self._select_device("cuda"), state="disabled")
-        self.gpu_radio.pack(anchor=tk.W, pady=5)
-        
-        self.cpu_radio = ttk.Radiobutton(select_frame, text="CPU", 
-                                         variable=self.device_selection, value="cpu",
-                                         command=lambda: self._select_device("cpu"))
-        self.cpu_radio.pack(anchor=tk.W, pady=5)
-        
-        self.device_info = ttk.Label(select_frame, text="", foreground="gray")
-        self.device_info.pack(pady=5)
-        
-        # Note
-        note = ttk.Label(main_frame, text="Note: GPU is much faster but requires NVIDIA GPU with CUDA.", 
-                        foreground="gray", font=("Arial", 9), wraplength=450)
-        note.pack(pady=(10, 20))
-        
-        # Continue button
-        self.continue_btn = ttk.Button(main_frame, text="Continue", command=self._continue, 
-                                       state="disabled", width=20)
-        self.continue_btn.pack(pady=10)
-    
-    def _detect_hardware(self):
-        """Detect GPU availability"""
-        try:
-            import torch
-            has_cuda = torch.cuda.is_available()
-            
-            if has_cuda:
-                gpu_name = torch.cuda.get_device_name(0)
-                self.gpu_label.config(text=f"GPU: {gpu_name}")
-                self.gpu_radio.config(text="GPU (Recommended)", state="normal")
-                self._select_device("cuda")  # Default to GPU
-            else:
-                self.gpu_label.config(text="GPU: Not detected")
-                self.gpu_radio.config(text="GPU (No NVIDIA GPU found)", state="disabled")
-                self._select_device("cpu")
-                
-        except OSError as e:
-            # CUDA PyTorch installed but CUDA Toolkit missing
-            if "caffe2_nvrtc.dll" in str(e) or "cudnn" in str(e).lower() or "cublas" in str(e).lower():
-                self.gpu_label.config(text="GPU: RTX detected - CUDA Toolkit required")
-                self.gpu_radio.config(text="GPU (Install CUDA Toolkit 11.8)", state="disabled")
-                # Enable CPU and continue button
-                self.selected_device = "cpu"
-                self.device_selection.set("cpu")
-                self.device_info.config(
-                    text="⚠️ GPU needs CUDA Toolkit 11.8.\nDownload: developer.nvidia.com/cuda-11-8-0\nContinuing with CPU (slower but works).", 
-                    foreground="#ff8800"
-                )
-                self.continue_btn.config(state="normal")
-            else:
-                raise  # Re-raise if it's a different OSError
-                
-        except Exception as e:
-            self.gpu_label.config(text="GPU: Detection failed")
-            self.gpu_radio.config(text="GPU (Detection failed)", state="disabled")
-            self._select_device("cpu")
-    
-    def _select_device(self, device):
-        """Handle device selection"""
-        self.selected_device = device
-        self.device_selection.set(device)
-        
-        if device == "cuda":
-            self.device_info.config(text="✓ Using GPU for faster processing")
-        else:
-            self.device_info.config(text="✓ Using CPU (slower but works on any computer)")
-        
-        self.continue_btn.config(state="normal")
-    
-    def _continue(self):
-        """Continue to loading"""
-        self.result = "accepted"
-        self.window.quit()
-        self.window.destroy()
-    
-    def show(self):
-        """Show dialog and wait"""
-        self.window.mainloop()
-        return self.result
-
-
-class LoadingDialog:
-    """Model loading/download dialog"""
-    
-    def __init__(self, device, app_data_path):
-        self.device = device
-        self.app_data_path = app_data_path
-        self.success = False
-        self.error_message = ""
-        
-        self.window = tk.Tk()
-        self.window.title("Voice Revolver AI - Loading")
-        
-        # Center window on screen
-        window_width = 450
-        window_height = 250
-        screen_width = self.window.winfo_screenwidth()
-        screen_height = self.window.winfo_screenheight()
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        self.window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        self.window.resizable(False, False)
-        
-        # Remove window decorations (no close/minimize buttons)
-        self.window.overrideredirect(True)
-        
-        self._build_ui()
-        
-        # Start loading in background thread
-        self.window.after(500, self._start_loading)
-    
-    def _build_ui(self):
-        """Build loading UI"""
-        main_frame = ttk.Frame(self.window, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title
-        title = ttk.Label(main_frame, text="Setting up Voice Revolver AI", font=("Arial", 14, "bold"))
-        title.pack(pady=(0, 20))
-        
-        # Status
-        self.status_label = ttk.Label(main_frame, text="Initializing...", font=("Arial", 10))
-        self.status_label.pack(pady=5)
-        
-        # Progress bar
-        self.progress_bar = ttk.Progressbar(main_frame, mode="determinate", length=400)
-        self.progress_bar.pack(pady=10)
-        
-        # Detail
-        self.detail_label = ttk.Label(main_frame, text="", foreground="gray", font=("Arial", 9))
-        self.detail_label.pack(pady=5)
-        
-        # Device info
-        device_text = f"Using device: {'GPU' if self.device == 'cuda' else 'CPU'}"
-        device_label = ttk.Label(main_frame, text=device_text, foreground="gray", font=("Arial", 9))
-        device_label.pack(side=tk.BOTTOM)
-    
-    def update_progress(self, percentage, status, detail=""):
-        """Update progress"""
-        self.progress_bar["value"] = percentage
-        self.status_label.config(text=status)
-        self.detail_label.config(text=detail)
-        self.window.update_idletasks()
-    
-    def _start_loading(self):
-        """Start loading process in background thread"""
-        thread = threading.Thread(target=self._load_dependencies, daemon=False)
-        thread.start()
-    
-    def _load_dependencies(self):
-        """Load dependencies (runs in background thread)"""
-        try:
-            # Step 1: FFmpeg
-            self.window.after(0, self.update_progress, 0, "Checking FFmpeg...", "Looking for FFmpeg installation")
-            
-            ffmpeg_checker = FFmpegChecker(self.app_data_path)
-            ffmpeg_checker.ensure_available()
-            
-            self.window.after(0, self.update_progress, 20, "FFmpeg ready", "Using FFmpeg for audio processing")
-            
-            # Step 2: Models
-            self.window.after(0, self.update_progress, 30, "Checking AI models...", "Looking for cached models")
-            
-            model_manager = ModelManager(self.app_data_path / "models")
-            cache_status = model_manager.check_cache()
-            
-            if not all(cache_status.values()):
-                self.window.after(0, self.update_progress, 40, "Downloading OpenVoice models...", "This may take a few minutes")
-                
-                def download_callback(model, prog):
-                    percentage = 40 + int(prog * 50)
-                    self.window.after(0, self.update_progress, percentage, f"Downloading {model}...", f"Progress: {int(prog * 100)}%")
-                
-                # Run async download in sync context
-                import asyncio
-                asyncio.run(model_manager.download_all_models(download_callback))
-            
-            self.window.after(0, self.update_progress, 90, "Loading complete!", "All dependencies ready")
-            
-            self.success = True
-            self.window.after(1000, self._finish)
-            
-        except Exception as e:
-            self.success = False
-            self.error_message = str(e)
-            self.window.after(0, self._show_error)
-    
-    def _show_error(self):
-        """Show error and exit"""
-        messagebox.showerror("Error", f"Failed to load dependencies:\n{self.error_message}")
-        self.window.quit()
-        self.window.destroy()
-    
-    def _finish(self):
-        """Finish loading"""
-        self.window.quit()
-        self.window.destroy()
-    
-    def show(self):
-        """Show dialog and wait"""
-        self.window.mainloop()
-        return self.success
 
 
 class VoiceRevolverApp:
@@ -393,7 +138,7 @@ class VoiceRevolverApp:
         # Ensure ffmpeg is available (was configured in main(), but double-check)
         ffmpeg_success, ffmpeg_error = self.ffmpeg_checker.ensure_available()
         if not ffmpeg_success:
-            self.log(f"⚠ FFmpeg warning: {ffmpeg_error}")
+            self.log(f"[WARNING] FFmpeg warning: {ffmpeg_error}")
         
         self.file_manager = FileManager(self.app_data_path / "temp")
         self.progress_tracker = ProgressTracker()
@@ -408,16 +153,7 @@ class VoiceRevolverApp:
     def _build_ui(self):
         """Build the UI"""
         # Menu bar
-        menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
-        
-        # View menu
-        view_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="View", menu=view_menu)
-        view_menu.add_command(label="Show/Hide Logs (F12)", command=self._toggle_log_window)
-        
-        # Keyboard shortcuts
-        self.root.bind('<F12>', lambda e: self._toggle_log_window())
+        self.menu_bar = MenuBar(self.root, on_toggle_logs=self._toggle_log_window)
         
         # Main container with responsive grid
         main_frame = ttk.Frame(self.root, padding="10")
@@ -655,7 +391,7 @@ class VoiceRevolverApp:
         # ===================================================================
         
         # Import spectrum editor
-        from voice_revolver_ui.spectrum_editor import SpectrumEditor
+        from voice_revolver_ui.features.vocal_changer.spectrum_editor import SpectrumEditor
         
         self.spectrum_editor = SpectrumEditor(right_top_frame)
         self.spectrum_editor.pack(fill=tk.BOTH, expand=True)
@@ -869,7 +605,7 @@ class VoiceRevolverApp:
             )
             
             progress_cb(60, "Vocals separated successfully")
-            self.log(f"✓ Vocals extracted: {stems.vocals}")
+            self.log(f"[OK] Vocals extracted: {stems.vocals}")
             
             # Store separated vocals path
             self.original_vocals_path = stems.vocals
@@ -894,9 +630,9 @@ class VoiceRevolverApp:
                         
                         if instrumental:
                             instrumental.export(str(self.instrumental_path), format="wav")
-                            self.log(f"✓ Instrumental created: {self.instrumental_path}")
+                            self.log(f"[OK] Instrumental created: {self.instrumental_path}")
                 except Exception as e:
-                    self.log(f"⚠ Could not create instrumental: {e}")
+                    self.log(f"[WARNING] Could not create instrumental: {e}")
             
             # 3. Auto-detect gender if gender alignment enabled (for initial curve setup)
             detected_gender = None
@@ -906,7 +642,7 @@ class VoiceRevolverApp:
                 progress_cb(70, "Detecting vocal gender...")
                 detector = GenderDetector()
                 detected_gender = detector.detect_gender(stems.vocals)
-                self.log(f"✓ Detected gender: {detected_gender}")
+                self.log(f"[OK] Detected gender: {detected_gender}")
                 
                 # Calculate initial pitch shift based on target gender
                 target_gender = self.original_gender_var.get()  # User's selected target
@@ -930,7 +666,7 @@ class VoiceRevolverApp:
             if self.improve_vocals_var.get() and is_resemble_enhance_available():
                 # Check if cached enhanced vocals exist
                 if cached_enhanced_path.exists():
-                    self.log(f"✓ Using cached enhanced vocals: {cached_enhanced_path.name}")
+                    self.log(f"[OK] Using cached enhanced vocals: {cached_enhanced_path.name}")
                     enhanced_vocals_path = cached_enhanced_path
                 else:
                     # Run enhancement
@@ -959,13 +695,13 @@ class VoiceRevolverApp:
                         )
                         
                         if success and enhanced_vocals_path.exists():
-                            self.log(f"✓ Vocal enhancement complete: {enhanced_vocals_path.name}")
+                            self.log(f"[OK] Vocal enhancement complete: {enhanced_vocals_path.name}")
                         else:
-                            self.log("⚠ Enhancement failed, using original vocals")
+                            self.log("[WARNING] Enhancement failed, using original vocals")
                             enhanced_vocals_path = None
                             
                     except Exception as e:
-                        self.log(f"⚠ Enhancement error: {e}")
+                        self.log(f"[WARNING] Enhancement error: {e}")
                         self.log("Using original vocals instead")
                         enhanced_vocals_path = None
             elif cached_enhanced_path.exists():
@@ -984,7 +720,7 @@ class VoiceRevolverApp:
             
         except Exception as e:
             error_msg = f"Separation failed: {str(e)}"
-            self.log(f"✗ {error_msg}")
+            self.log(f"[ERROR] {error_msg}")
             self.log(traceback.format_exc())
             self.root.after(0, self._separation_failed_callback, error_msg)
     
@@ -1029,10 +765,10 @@ class VoiceRevolverApp:
             
             # Log completion
             if detected_gender:
-                self.log(f"✓ Separation complete! Detected: {detected_gender} vocals")
+                self.log(f"[OK] Separation complete! Detected: {detected_gender} vocals")
                 self.log("Adjust gender if detection is incorrect")
             else:
-                self.log("✓ Separation complete!")
+                self.log("[OK] Separation complete!")
             
             # Log pre-populated curve settings
             if initial_pitch_shift != 0:
@@ -1065,7 +801,7 @@ class VoiceRevolverApp:
     def _apply_curve_changes(self):
         """Apply pitch/volume/reverb curve edits to the separated vocals"""
         if not hasattr(self, 'original_vocals_path') or not self.original_vocals_path:
-            self.log("⚠ No separated vocals available. Run separation first.")
+            self.log("[WARNING] No separated vocals available. Run separation first.")
             return
         
         # Get curves from spectrum editor
@@ -1144,11 +880,11 @@ class VoiceRevolverApp:
                     )
                     if success and blend_output.exists():
                         current_audio = blend_output
-                        self.root.after(0, self.log, "  ✓ Blend curve applied (original + enhanced mixed)")
+                        self.root.after(0, self.log, "  [OK] Blend curve applied (original + enhanced mixed)")
                     else:
                         raise RuntimeError("Failed to apply blend curve")
                 else:
-                    self.root.after(0, self.log, "  ⚠ Enhanced vocals not available, skipping blend")
+                    self.root.after(0, self.log, "  [WARNING] Enhanced vocals not available, skipping blend")
             
             # Apply pitch curve
             if curves['pitch'].has_edits():
@@ -1163,7 +899,7 @@ class VoiceRevolverApp:
                 )
                 if success and pitch_output.exists():
                     current_audio = pitch_output
-                    self.root.after(0, self.log, "  ✓ Pitch curve applied")
+                    self.root.after(0, self.log, "  [OK] Pitch curve applied")
                 else:
                     raise RuntimeError("Failed to apply pitch curve")
             
@@ -1180,7 +916,7 @@ class VoiceRevolverApp:
                 )
                 if success and volume_output.exists():
                     current_audio = volume_output
-                    self.root.after(0, self.log, "  ✓ Volume curve applied")
+                    self.root.after(0, self.log, "  [OK] Volume curve applied")
                 else:
                     raise RuntimeError("Failed to apply volume curve")
             
@@ -1197,7 +933,7 @@ class VoiceRevolverApp:
                 )
                 if success and reverb_output.exists():
                     current_audio = reverb_output
-                    self.root.after(0, self.log, "  ✓ Reverb curve applied")
+                    self.root.after(0, self.log, "  [OK] Reverb curve applied")
                 else:
                     raise RuntimeError("Failed to apply reverb curve")
             
@@ -1240,9 +976,9 @@ class VoiceRevolverApp:
                         curves['instrumental_volume']
                     )
                     if success and instrumental_preview.exists():
-                        self.root.after(0, self.log, "  ✓ Instrumental volume curve applied")
+                        self.root.after(0, self.log, "  [OK] Instrumental volume curve applied")
                     else:
-                        self.root.after(0, self.log, "  ⚠ Failed to apply instrumental volume curve")
+                        self.root.after(0, self.log, "  [WARNING] Failed to apply instrumental volume curve")
                         instrumental_preview = None
             
             # Success - reload in spectrum editor (preserving curves)
@@ -1263,7 +999,7 @@ class VoiceRevolverApp:
             # Reload processed instrumental if available
             if instrumental_preview_path and instrumental_preview_path.exists():
                 self.spectrum_editor.reload_instrumental_only(instrumental_preview_path)
-                self.log("  ✓ Instrumental preview updated")
+                self.log("  [OK] Instrumental preview updated")
             
             # Re-enable spectrum editor
             self.spectrum_editor.set_enabled(True)
@@ -1272,7 +1008,7 @@ class VoiceRevolverApp:
             self._update_progress(100, "✓ Changes applied to preview")
             self.status_label.config(foreground="green")
             
-            self.log("✓ Curve changes applied successfully!")
+            self.log("[OK] Curve changes applied successfully!")
             self.log("  Preview updated - control points preserved for further editing")
             self.log("  Original vocals unchanged")
             self.log("=" * 50)
@@ -1291,7 +1027,7 @@ class VoiceRevolverApp:
         self.status_label.config(foreground="red")
         
         # Show error
-        self.log(f"✗ {error_msg}")
+        self.log(f"[ERROR] {error_msg}")
         self.log("=" * 50)
         messagebox.showerror("Apply Failed", error_msg)
     
@@ -1548,7 +1284,7 @@ class VoiceRevolverApp:
                 if not index_files:
                     return False, "Invalid RVC model: No .index file found in zip"
                 
-                self.log(f"✓ Valid RVC model: {pth_files[0]} + {index_files[0]}")
+                self.log(f"[OK] Valid RVC model: {pth_files[0]} + {index_files[0]}")
                 return True, ""
                 
         except zipfile.BadZipFile:
@@ -1727,7 +1463,7 @@ class VoiceRevolverApp:
         self.progress_bar["value"] = 100
         self.status_label.config(text="✓ Complete!", foreground="green")
         self.log("=" * 60)
-        self.log("✓ Processing complete!")
+        self.log("[OK] Processing complete!")
         self.log(f"Output: {self.output_file}")
         self.log("=" * 60)
         
@@ -1746,7 +1482,7 @@ class VoiceRevolverApp:
         self.progress_bar["value"] = 0
         self.status_label.config(text="✗ Failed", foreground="red")
         self.log("=" * 60)
-        self.log(f"✗ Processing failed: {error}")
+        self.log(f"[ERROR] Processing failed: {error}")
         self.log("=" * 60)
         
         self.start_btn.config(state="normal")
@@ -1786,10 +1522,10 @@ class VoiceRevolverApp:
             try:
                 import shutil
                 shutil.copy(self.output_file, save_path)
-                self.log(f"✓ Exported to: {save_path}")
+                self.log(f"[OK] Exported to: {save_path}")
                 messagebox.showinfo("Export Complete", f"File saved to:\n{save_path}")
             except Exception as e:
-                self.log(f"✗ Export failed: {e}")
+                self.log(f"[ERROR] Export failed: {e}")
                 messagebox.showerror("Export Failed", f"Error:\n{e}")
     
     # ========== Audio Preview Methods (6-Track System) ==========
@@ -1863,9 +1599,9 @@ class VoiceRevolverApp:
             self.log(f"Looking for reference_denoised at: {reference_denoised_path}")
             if reference_denoised_path.exists():
                 self.reference_denoised_path = str(reference_denoised_path)
-                self.log(f"✓ Found reference_denoised.wav")
+                self.log(f"[OK] Found reference_denoised.wav")
             else:
-                self.log(f"✗ reference_denoised.wav not found")
+                self.log(f"[ERROR] reference_denoised.wav not found")
         else:
             # Model mode - skip reference denoising
             self.log("Model mode: Skipping reference_denoised preview (not applicable for RVC)")
@@ -1909,7 +1645,7 @@ class VoiceRevolverApp:
             if file_path and os.path.exists(file_path):
                 self._load_single_preview(track_id, file_path, name)
             else:
-                self.log(f"⚠ {name} not available for preview")
+                self.log(f"[WARNING] {name} not available for preview")
     
     def _create_instrumental_track(self, temp_dir):
         """Create instrumental-only track by mixing non-vocal stems"""
@@ -1932,11 +1668,11 @@ class VoiceRevolverApp:
                 instrumental_path = temp_dir / "instrumental_only.wav"
                 instrumental.export(str(instrumental_path), format="wav")
                 self.instrumental_path = instrumental_path  # Keep as Path object
-                self.log("✓ Created instrumental track")
+                self.log("[OK] Created instrumental track")
             else:
-                self.log("⚠ Could not create instrumental track")
+                self.log("[WARNING] Could not create instrumental track")
         except Exception as e:
-            self.log(f"⚠ Error creating instrumental: {e}")
+            self.log(f"[WARNING] Error creating instrumental: {e}")
     
     def _load_single_preview(self, track_id, file_path, track_name):
         """Load a single audio file for preview"""
@@ -1961,9 +1697,9 @@ class VoiceRevolverApp:
             total_sec = int(length % 60)
             controls['time_label'].config(text=f"00:00/{total_min:02d}:{total_sec:02d}")
             
-            self.log(f"✓ Loaded {track_name} for preview")
+            self.log(f"[OK] Loaded {track_name} for preview")
         except Exception as e:
-            self.log(f"⚠ Could not load {track_name}: {e}")
+            self.log(f"[WARNING] Could not load {track_name}: {e}")
     
     def _toggle_playback(self, track_id):
         """Toggle play/pause for a specific track"""
@@ -2002,7 +1738,7 @@ class VoiceRevolverApp:
                 controls['play_btn'].config(text="⏸")
                 self._update_playback_time(track_id)
             except Exception as e:
-                self.log(f"⚠ Playback error: {e}")
+                self.log(f"[WARNING] Playback error: {e}")
     
     def _on_tau_change(self, value):
         """Handle tau slider changes - update entry field"""
@@ -2011,7 +1747,7 @@ class VoiceRevolverApp:
             self.tau_entry.delete(0, tk.END)
             self.tau_entry.insert(0, f"{tau:.2f}")
         except Exception as e:
-            self.log(f"⚠ Tau slider error: {e}")
+            self.log(f"[WARNING] Tau slider error: {e}")
     
     def _on_tau_entry_change(self, event):
         """Handle tau entry field changes - update slider"""
@@ -2028,7 +1764,7 @@ class VoiceRevolverApp:
             self.tau_entry.delete(0, tk.END)
             self.tau_entry.insert(0, f"{self.tau_var.get():.2f}")
         except Exception as e:
-            self.log(f"⚠ Tau entry error: {e}")
+            self.log(f"[WARNING] Tau entry error: {e}")
     
     def _reset_tau(self):
         """Reset tau (conversion strength) to default value 0.3"""
@@ -2072,7 +1808,7 @@ class VoiceRevolverApp:
             position = float(value)
             mixer.music.set_pos(position)
         except Exception as e:
-            self.log(f"⚠ Seek error: {e}")
+            self.log(f"[WARNING] Seek error: {e}")
     
     def _on_preview_volume_change(self, value):
         """Handle preview section volume slider changes"""
@@ -2110,7 +1846,7 @@ class VoiceRevolverApp:
             # Schedule next update
             state['timer'] = self.root.after(100, self._update_playback_time, track_id)
         except Exception as e:
-            self.log(f"⚠ Playback update error: {e}")
+            self.log(f"[WARNING] Playback update error: {e}")
     
     def _get_track_path(self, track_id):
         """Get file path for a specific track"""
@@ -2169,10 +1905,10 @@ class VoiceRevolverApp:
                     import shutil
                     shutil.copy(file_path, save_path)
                 
-                self.log(f"✓ Exported {track_name} to: {save_path}")
+                self.log(f"[OK] Exported {track_name} to: {save_path}")
                 messagebox.showinfo("Export Complete", f"File saved to:\\n{save_path}")
             except Exception as e:
-                self.log(f"✗ Export failed: {e}")
+                self.log(f"[ERROR] Export failed: {e}")
                 messagebox.showerror("Export Failed", f"Error:\\n{e}")
 
 
@@ -2180,17 +1916,17 @@ def main():
     """Main entry point"""
     # Check Python version
     if sys.version_info[:2] != (3, 11):
-        print(f"⚠ WARNING: Python 3.11.x required, you are using {sys.version}")
+        print(f"[WARNING] WARNING: Python 3.11.x required, you are using {sys.version}")
         print("   PyTorch may not work correctly with other versions!")
     
     # Preload PyTorch to avoid DLL loading issues
     try:
-        print("⏳ Preloading PyTorch...")
+        print("[LOADING] Preloading PyTorch...")
         import torch
         _ = torch.tensor([1.0])
-        print(f"✓ PyTorch {torch.__version__} loaded")
+        print(f"[OK] PyTorch {torch.__version__} loaded")
     except Exception as e:
-        print(f"⚠ PyTorch preload warning: {e}")
+        print(f"[WARNING] PyTorch preload warning: {e}")
     
     # Get app data path
     if sys.platform == "win32":
@@ -2203,7 +1939,7 @@ def main():
     app_data_path.mkdir(parents=True, exist_ok=True)
     
     # Configure FFmpeg EARLY (before any pydub/AI imports)
-    print("⏳ Configuring FFmpeg...")
+    print("[LOADING] Configuring FFmpeg...")
     try:
         # Use static-ffmpeg to get bundled FFmpeg binaries (no external downloads needed)
         from static_ffmpeg import run
@@ -2223,20 +1959,20 @@ def main():
         os.environ['FFMPEG_BINARY'] = ffmpeg_exe
         os.environ['FFPROBE_BINARY'] = ffprobe_exe
         
-        print(f"✓ FFmpeg configured: {ffmpeg_exe}")
+        print(f"[OK] FFmpeg configured: {ffmpeg_exe}")
     except Exception as e:
-        print(f"⚠ FFmpeg configuration warning: {e}")
+        print(f"[WARNING] FFmpeg configuration warning: {e}")
         print(f"   FFmpeg may not be available, processing will fail")
     
     # Preload AI libraries (AFTER ffmpeg is configured)
     try:
-        print("⏳ Preloading AI libraries...")
+        print("[LOADING] Preloading AI libraries...")
         from openvoice.api import ToneColorConverter
         from demucs.pretrained import get_model
         import torchaudio
-        print("✓ AI libraries loaded")
+        print("[OK] AI libraries loaded")
     except Exception as e:
-        print(f"⚠ AI library preload warning: {e}")
+        print(f"[WARNING] AI library preload warning: {e}")
     
     # Setup logging
     log_file = app_data_path / "logs" / "app.log"

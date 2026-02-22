@@ -73,9 +73,196 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
   logger.info(f"[MUSIC] Applying curve to {filename}")
   ```
 
+### UI Component Architecture
+- **Pattern:** Component-based architecture for scalability and maintainability
+- **Critical Rule:** **NEVER break working code** - Current app is stable and production-ready
+
+#### Directory Structure
+```
+voice_revolver_ui/
+├── main.py                    # Entry point
+├── main_tk.py                 # Main window (~2000 lines, refactored from 2286)
+├── components/                # Reusable UI widgets ✅ IMPLEMENTED
+│   ├── __init__.py           # Exports LabeledSlider, FileSelector
+│   ├── labeled_slider.py     # ✅ Slider with label and value display
+│   └── file_selector.py      # ✅ File/folder selection widget
+└── features/                  # Feature-specific workspaces ✅ IMPLEMENTED
+    ├── __init__.py
+    ├── startup_dialog/        # ✅ Device selection dialog
+    │   ├── __init__.py
+    │   └── startup_dialog.py  # GPU/CPU detection, device selection
+    ├── loading_dialog/        # ✅ Model loading dialog
+    │   ├── __init__.py
+    │   └── loading_dialog.py  # FFmpeg setup, model downloads
+    ├── menu_bar/              # ✅ Application menu bar
+    │   ├── __init__.py
+    │   └── menu_bar.py        # Workspace menu, View menu, keyboard shortcuts
+    ├── vocal_changer/         # ✅ Voice replacement workspace
+    │   ├── __init__.py
+    │   ├── spectrum_editor.py # ✅ MOVED - Volume curve editor
+    │   └── panels/            # Ready for future panel extraction
+    │       └── __init__.py
+    ├── audio_separation/      # Future: Stem separation only
+    ├── text_to_speech/        # Future: TTS workspace
+    ├── voice_cloning/         # Future: Voice cloning workspace
+    └── voice_training/        # Future: Voice training workspace
+```
+
+#### Implemented Components
+
+**General Components** (`components/`):
+1. **LabeledSlider** - Reusable slider with label and value display
+   - Supports custom formatting (integers, floats, units)
+   - Optional change callbacks
+   - Usage: `LabeledSlider(parent, "Pitch:", -12, 12, value_format=lambda v: f"{int(v)} semitones")`
+
+2. **FileSelector** - File/folder selection widget with browse button
+   - Supports file or folder mode
+   - Configurable file type filters
+   - Optional selection callbacks
+   - Usage: `FileSelector(parent, "Audio File:", mode="file", file_types=(("Audio", "*.wav *.mp3"),))`
+
+**Feature Components** (`features/`):
+1. **StartupDialog** - Device selection and hardware detection
+   - Auto-detects GPU (CUDA) availability
+   - Shows CUDA Toolkit warnings if needed
+   - Allows CPU/GPU selection
+
+2. **LoadingDialog** - Dependency checking and model downloads
+   - Checks FFmpeg installation
+   - Downloads AI models if needed
+   - Shows progress bar with status updates
+
+3. **MenuBar** - Application menu bar
+   - Workspace menu (switch between features)
+   - View menu (show/hide logs with F12)
+   - Keyboard shortcuts handling
+
+4. **SpectrumEditor** - Volume curve editing (in `vocal_changer/`)
+   - Moved from root to feature directory
+   - Vocal volume, pitch, blend, reverb, instrumental volume curves
+
+
+#### Component Pattern Template
+```python
+"""
+Component Name - Brief description
+
+This component provides [functionality description].
+Used in: [list of features that use this component]
+"""
+
+import tkinter as tk
+from tkinter import ttk
+
+class ComponentName(ttk.Frame):
+    """Brief description of the component."""
+    
+    def __init__(self, parent, **kwargs):
+        """Initialize the component.
+        
+        Args:
+            parent: Parent tkinter widget
+            **kwargs: Additional configuration options
+        """
+        super().__init__(parent)
+        self._setup_ui()
+        self._bind_events()
+    
+    def _setup_ui(self):
+        """Create and layout child widgets."""
+        # Component-specific UI setup
+        pass
+    
+    def _bind_events(self):
+        """Bind event handlers."""
+        # Event binding logic
+        pass
+    
+    # Public API methods
+    def update_state(self, data):
+        """Update component state with new data."""
+        pass
+```
+
+#### Workspace Switcher Design
+- **Main Window** (main_tk.py) provides a menu: `Workspace → [Feature Name]`
+- Each feature is a complete, self-contained UI implementation
+- Switching workspaces replaces the entire content area
+- Features can share components from `components/`
+
+#### Migration Safety Rules
+1. **Git commit before each phase** - Enable rollback with `git reset --hard HEAD`
+2. **Test after each component extraction** - Run app, verify functionality
+3. **Extract smallest components first** - Minimize risk, validate approach
+4. **Update imports incrementally** - One component at a time
+5. **Keep old code until fully migrated** - Don't delete until new code proven stable
+6. **Zero tolerance for regressions** - If anything breaks, rollback immediately
+
+#### Migration Phases
+- **Phase 1:** Create directory structure + documentation ✅ COMPLETED (Feb 22, 2026)
+  - Created `components/` and `features/` directories
+  - Created `features/vocal_changer/` subdirectory
+  - Updated AGENT_MEMORY.md with architecture documentation
+  
+- **Phase 2:** Extract general components → `components/` ✅ COMPLETED (Feb 22, 2026)
+  - Created `LabeledSlider` component (slider + label + value display)
+  - Created `FileSelector` component (file/folder picker with dialog)
+  - Updated `components/__init__.py` to export components
+  
+- **Phase 3:** Extract feature dialogs → `features/` ✅ COMPLETED (Feb 22, 2026)
+  - Extracted `StartupDialog` → `features/startup_dialog/`
+  - Extracted `LoadingDialog` → `features/loading_dialog/`
+  - Extracted menu bar → `features/menu_bar/`
+  - Moved `spectrum_editor.py` → `features/vocal_changer/`
+  - Reduced main_tk.py from 2286 to ~2000 lines (~260 line reduction)
+  
+- **Phase 4:** Extract vocal_changer panels → `features/vocal_changer/panels/` (Future)
+  - Extract audio input panel (file selection, separation controls)
+  - Extract reference panel (voice reference selection)
+  - Extract processing panel (curve editing, processing controls)
+  - Extract preview panel (audio playback, export controls)
+  
+- **Phase 5:** Implement additional workspaces (Future)
+  - Audio Separation workspace
+  - Text to Speech workspace
+  - Voice Cloning workspace
+  - Voice Training workspace
+
 ---
 
 ## History Log
+
+### 2026-02-22 | UI Component Architecture Implementation
+- **Topic:** Refactored UI into component-based architecture for scalability
+- **Motivation:** 2286-line main_tk.py was becoming unmaintainable, needed modular structure for future features
+- **Implementation:**
+  1. **Directory Structure:**
+     - Created `voice_revolver_ui/components/` for reusable widgets
+     - Created `voice_revolver_ui/features/` for workspace implementations
+     - Created subdirectories for each feature/dialog
+  2. **General Components Created:**
+     - `LabeledSlider`: Reusable slider with label and formatted value display
+     - `FileSelector`: File/folder picker with browse button and file type filters
+  3. **Feature Components Extracted:**
+     - `StartupDialog`: Moved from inline class to `features/startup_dialog/`
+     - `LoadingDialog`: Moved from inline class to `features/loading_dialog/`
+     - `MenuBar`: Extracted menu creation to `features/menu_bar/`
+     - `SpectrumEditor`: Moved to `features/vocal_changer/spectrum_editor.py`
+  4. **Menu Bar Enhancements:**
+     - Added Workspace menu showing current workspace (Vocal Changer)
+     - Added placeholder entries for 4 future workspaces (disabled)
+     - View menu with logs toggle (F12) maintained
+  5. **Code Cleanup:**
+     - Removed ~260 lines from main_tk.py (inline dialog classes)
+     - Updated imports to use new component locations
+     - Fixed emoji encoding in logging (Windows cp1252 compatibility)
+- **Results:**
+  - ✅ All components import and integrate successfully
+  - ✅ App launches without errors
+  - ✅ Zero regressions detected
+  - ✅ Foundation ready for future workspace additions
+  - ✅ Code is more maintainable and scalable
 
 ### 2026-02-22 | Instrumental Volume Curve Integration & Logging Fix
 - **Topic:** Implemented instrumental volume editing in spectrum editor + applied to final mix processing
