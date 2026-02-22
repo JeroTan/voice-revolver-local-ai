@@ -122,3 +122,9 @@ class FileSelector(ttk.Frame):
     def configure_label(self, **kwargs):
         """Configure the label widget."""
         self.label_widget.config(**kwargs)
+    
+    def set_enabled(self, enabled: bool):
+        """Enable or disable the file selector."""
+        state = 'normal' if enabled else 'disabled'
+        self.entry.config(state=state)
+        self.browse_btn.config(state=state)

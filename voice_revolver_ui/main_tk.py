@@ -35,7 +35,7 @@ from voice_revolver_core.infrastructure.model_manager import ModelManager
 from voice_revolver_core.infrastructure.ffmpeg_checker import FFmpegChecker
 from voice_revolver_core.infrastructure.demucs_wrapper import DemucsWrapper
 # from voice_revolver_core.infrastructure.openvoice_wrapper import OpenVoiceWrapper  # Legacy - kept for reference
-from voice_revolver_core.infrastructure.chatterbox_wrapper import ChatterBoxWrapper
+from voice_revolver_core.infrastructure.chatterbox_vc_wrapper import ChatterBoxVCWrapper
 from voice_revolver_core.infrastructure.audio_mixer import AudioMixer
 from voice_revolver_core.infrastructure.format_converter import FormatConverter
 from voice_revolver_core.infrastructure.resemble_enhance_wrapper import is_resemble_enhance_available, enhance_vocals
@@ -48,6 +48,7 @@ from voice_revolver_ui.features.startup_dialog import StartupDialog
 from voice_revolver_ui.features.loading_dialog import LoadingDialog
 from voice_revolver_ui.features.menu_bar import MenuBar
 from voice_revolver_ui.features.audio_separation import AudioSeparationWorkspace
+from voice_revolver_ui.features.text_to_speech import TextToSpeechWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -523,9 +524,21 @@ class VoiceRevolverApp:
         self.audio_separation_workspace.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.audio_separation_workspace.grid_remove()  # Hidden initially
         
-        # Enable both workspaces in menu
+        # Create Text-to-Speech workspace (hidden initially)
+        self.tts_workspace = TextToSpeechWorkspace(
+            parent=self.workspace_container,
+            root=self.root,
+            app_data_path=self.app_data_path,
+            device=self.device,
+            log_callback=self.log
+        )
+        self.tts_workspace.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.tts_workspace.grid_remove()  # Hidden initially
+        
+        # Enable all workspaces in menu
         self.menu_bar.enable_workspace("vocal_changer", lambda: self._switch_workspace("vocal_changer"))
         self.menu_bar.enable_workspace("audio_separation", lambda: self._switch_workspace("audio_separation"))
+        self.menu_bar.enable_workspace("text_to_speech", lambda: self._switch_workspace("text_to_speech"))
         
         # Set initial active workspace
         self.current_workspace = "vocal_changer"
@@ -537,7 +550,7 @@ class VoiceRevolverApp:
         """Switch between workspaces.
         
         Args:
-            workspace_id: ID of workspace to switch to ("vocal_changer" or "audio_separation")
+            workspace_id: ID of workspace to switch to ("vocal_changer", "audio_separation", or "text_to_speech")
         """
         # Stop any playing audio
         if PYGAME_AVAILABLE:
@@ -549,11 +562,15 @@ class VoiceRevolverApp:
         # Hide all workspaces
         self.vocal_changer_frame.grid_remove()
         self.audio_separation_workspace.grid_remove()
+        self.tts_workspace.grid_remove()
         
         # Show selected workspace
         if workspace_id == "audio_separation":
             self.audio_separation_workspace.grid()
             self.current_workspace = "audio_separation"
+        elif workspace_id == "text_to_speech":
+            self.tts_workspace.grid()
+            self.current_workspace = "text_to_speech"
         else:
             self.vocal_changer_frame.grid()
             self.current_workspace = "vocal_changer"
@@ -1456,7 +1473,7 @@ class VoiceRevolverApp:
                 self.log("Using Demucs for stem separation (balanced quality)")
             
             # ChatterBox VC - Better quality than OpenVoice
-            chatterbox_wrapper = ChatterBoxWrapper(device)
+            chatterbox_wrapper = ChatterBoxVCWrapper(device)
             
             # OpenVoice (legacy - uncomment to use instead of ChatterBox):
             # openvoice_wrapper = OpenVoiceWrapper(

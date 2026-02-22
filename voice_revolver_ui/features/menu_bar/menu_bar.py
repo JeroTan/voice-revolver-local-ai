@@ -50,7 +50,7 @@ class MenuBar:
         workspace_menu.add_command(label="Audio Separation")
         self.workspace_items["audio_separation"] = 1
         
-        workspace_menu.add_command(label="Text to Speech (Coming Soon)", state="disabled")
+        workspace_menu.add_command(label="Text to Speech")
         self.workspace_items["text_to_speech"] = 2
         
         workspace_menu.add_command(label="Voice Cloning (Coming Soon)", state="disabled")

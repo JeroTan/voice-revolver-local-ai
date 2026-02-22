@@ -1,6 +1,6 @@
 """
-ChatterBox Wrapper - Infrastructure Layer
-Wraps ChatterBox VC for voice conversion
+ChatterBox VC Wrapper - Infrastructure Layer
+Wraps ChatterBox VC for voice conversion (voice cloning)
 """
 
 from pathlib import Path
@@ -10,7 +10,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class ChatterBoxWrapper:
+class ChatterBoxVCWrapper:
     """
     Infrastructure wrapper for ChatterBox voice conversion.
     Converts source vocals to match target voice characteristics.

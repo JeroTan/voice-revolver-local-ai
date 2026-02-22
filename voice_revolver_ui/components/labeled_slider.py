@@ -54,6 +54,9 @@ class LabeledSlider(ttk.Frame):
         self.label_text = label
         self.value_format = value_format
         self.on_change_callback = on_change
+        self.initial_value = initial_value  # Store for reset
+        self.from_ = from_
+        self.to_ = to
         
         # Create variable
         self.var = tk.DoubleVar(value=initial_value)
@@ -85,22 +88,31 @@ class LabeledSlider(ttk.Frame):
         )
         self.slider.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
         
-        # Value display
-        self.value_label = ttk.Label(self, text="")
-        self.value_label.grid(row=0, column=2, sticky=tk.W, padx=(5, 0))
+        # Value input field (editable)
+        self.value_entry = ttk.Entry(self, width=8)
+        self.value_entry.grid(row=0, column=2, sticky=tk.W, padx=(5, 2))
+        self.value_entry.bind('<Return>', self._on_entry_change)
+        self.value_entry.bind('<FocusOut>', self._on_entry_change)
+        
+        # Reset button
+        self.reset_btn = ttk.Button(self, text="↺", width=3, command=self._on_reset)
+        self.reset_btn.grid(row=0, column=3, sticky=tk.W, padx=(2, 0))
     
     def _on_value_change(self, value):
         """Handle slider value changes."""
         try:
             value_float = float(value)
             
-            # Format value for display
+            # Format value for entry display
             if callable(self.value_format):
-                display_text = self.value_format(value_float)
+                # If custom formatter, extract just the number
+                self.value_entry.delete(0, tk.END)
+                self.value_entry.insert(0, f"{value_float:.2f}")
             else:
+                # Use format string
                 display_text = self.value_format.format(value_float)
-            
-            self.value_label.config(text=display_text)
+                self.value_entry.delete(0, tk.END)
+                self.value_entry.insert(0, display_text)
             
             # Call external callback if provided
             if self.on_change_callback:
@@ -108,7 +120,28 @@ class LabeledSlider(ttk.Frame):
                 
         except (ValueError, TypeError) as e:
             # If formatting fails, display raw value
-            self.value_label.config(text=str(value))
+            self.value_entry.delete(0, tk.END)
+            self.value_entry.insert(0, str(value))
+    
+    def _on_entry_change(self, event=None):
+        """Handle manual entry changes."""
+        try:
+            value_str = self.value_entry.get().strip()
+            value_float = float(value_str)
+            
+            # Clamp to range
+            value_float = max(self.from_, min(self.to_, value_float))
+            
+            # Update slider
+            self.var.set(value_float)
+            
+        except ValueError:
+            # Invalid input - reset to current value
+            self._on_value_change(self.var.get())
+    
+    def _on_reset(self):
+        """Reset to initial value."""
+        self.var.set(self.initial_value)
     
     def get(self) -> float:
         """Get current slider value."""
@@ -126,6 +159,6 @@ class LabeledSlider(ttk.Frame):
         """Configure the label widget."""
         self.label_widget.config(**kwargs)
     
-    def configure_value_display(self, **kwargs):
-        """Configure the value display widget."""
-        self.value_label.config(**kwargs)
+    def configure_entry(self, **kwargs):
+        """Configure the value entry widget."""
+        self.value_entry.config(**kwargs)

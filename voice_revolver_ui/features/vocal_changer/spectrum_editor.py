@@ -78,8 +78,11 @@ class SpectrumEditor(ttk.Frame):
     All three curves are stored independently and applied cumulatively.
     """
     
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, enable_instrumental_mode=True, **kwargs):
         super().__init__(parent, **kwargs)
+        
+        # Configuration
+        self.enable_instrumental_mode = enable_instrumental_mode  # Whether to show instrumental volume mode
         
         # Check dependencies
         if not MATPLOTLIB_AVAILABLE or not LIBROSA_AVAILABLE:
@@ -332,15 +335,17 @@ class SpectrumEditor(ttk.Frame):
         )
         self.volume_radio.pack(side=tk.LEFT, padx=20)
         
-        self.instrumental_volume_radio = ttk.Radiobutton(
-            button_container,
-            text="Instrumental Vol",
-            value="instrumental_volume",
-            variable=self.mode_var,
-            command=self._switch_mode
-        )
-        self.instrumental_volume_radio.pack(side=tk.LEFT, padx=20)
-        self.instrumental_volume_radio.pack_forget()  # Hidden initially until instrumental loaded
+        # Instrumental Volume mode (only available if enabled)
+        if self.enable_instrumental_mode:
+            self.instrumental_volume_radio = ttk.Radiobutton(
+                button_container,
+                text="Instrumental Vol",
+                value="instrumental_volume",
+                variable=self.mode_var,
+                command=self._switch_mode
+            )
+            self.instrumental_volume_radio.pack(side=tk.LEFT, padx=20)
+            self.instrumental_volume_radio.pack_forget()  # Hidden initially until instrumental loaded
         
         self.noise_radio = ttk.Radiobutton(
             button_container,
@@ -511,11 +516,12 @@ class SpectrumEditor(ttk.Frame):
                 self.blend_radio.pack_forget()
             
             # Show/hide instrumental volume button based on instrumental availability
-            if self.has_instrumental:
-                self.instrumental_volume_radio.pack(side=tk.LEFT, padx=20)
-                logger.info("Instrumental Volume mode available (instrumental audio loaded)")
-            else:
-                self.instrumental_volume_radio.pack_forget()
+            if self.enable_instrumental_mode:
+                if self.has_instrumental:
+                    self.instrumental_volume_radio.pack(side=tk.LEFT, padx=20)
+                    logger.info("Instrumental Volume mode available (instrumental audio loaded)")
+                else:
+                    self.instrumental_volume_radio.pack_forget()
             
             # Enable playback controls
             if PYGAME_AVAILABLE:
@@ -940,29 +946,32 @@ class SpectrumEditor(ttk.Frame):
         new_time = max(0, min(self.duration, event.xdata))
         new_value = event.ydata
         
+        # Get current axis limits to respect zoom level
+        ymin, ymax = self.ax.get_ylim()
+        
         # Update control point
         if curve_type == "pitch":
-            new_value = max(-12, min(12, new_value))
+            new_value = max(ymin, min(ymax, new_value))
             self.pitch_curve.control_points[point_index].time = new_time
             self.pitch_curve.control_points[point_index].shift_semitones = new_value
         elif curve_type == "reverb":
-            new_value = max(0, min(100, new_value))
+            new_value = max(ymin, min(ymax, new_value))
             self.reverb_curve.control_points[point_index].time = new_time
             self.reverb_curve.control_points[point_index].wet_percent = new_value
         elif curve_type == "volume":
-            new_value = max(-50, min(50, new_value))
+            new_value = max(ymin, min(ymax, new_value))
             self.volume_curve.control_points[point_index].time = new_time
             self.volume_curve.control_points[point_index].gain_db = new_value
         elif curve_type == "instrumental_volume":
-            new_value = max(-50, min(50, new_value))
+            new_value = max(ymin, min(ymax, new_value))
             self.instrumental_volume_curve.control_points[point_index].time = new_time
             self.instrumental_volume_curve.control_points[point_index].gain_db = new_value
         elif curve_type == "noise":
-            new_value = max(0, min(100, new_value))
+            new_value = max(ymin, min(ymax, new_value))
             self.noise_curve.control_points[point_index].time = new_time
             self.noise_curve.control_points[point_index].reduction_percent = new_value
         elif curve_type == "blend":
-            new_value = max(0, min(100, new_value))
+            new_value = max(ymin, min(ymax, new_value))
             self.blend_curve.control_points[point_index].time = new_time
             self.blend_curve.control_points[point_index].enhanced_percent = new_value
         
@@ -1005,30 +1014,33 @@ class SpectrumEditor(ttk.Frame):
         if ydata is None:
             return
         
+        # Get current axis limits to respect zoom level
+        ymin, ymax = self.ax.get_ylim()
+        
         # Format label text based on current mode
         if self.current_mode == "pitching":
-            # Clamp to pitch range
-            pitch = max(-12, min(12, ydata))
+            # Clamp to current axis limits (respects zoom)
+            pitch = max(ymin, min(ymax, ydata))
             label_text = f"Pitch: {pitch:+.1f} semitones"
         elif self.current_mode == "reverb":
-            # Clamp to reverb range
-            reverb = max(0, min(100, ydata))
+            # Clamp to current axis limits (respects zoom)
+            reverb = max(ymin, min(ymax, ydata))
             label_text = f"Reverb: {reverb:.0f}%"
         elif self.current_mode == "volume":
-            # Clamp to volume range
-            volume = max(-50, min(50, ydata))
+            # Clamp to current axis limits (respects zoom)
+            volume = max(ymin, min(ymax, ydata))
             label_text = f"Volume: {volume:+.1f} dB"
         elif self.current_mode == "instrumental_volume":
-            # Clamp to instrumental volume range
-            inst_vol = max(-50, min(50, ydata))
+            # Clamp to current axis limits (respects zoom)
+            inst_vol = max(ymin, min(ymax, ydata))
             label_text = f"Instrumental: {inst_vol:+.1f} dB"
         elif self.current_mode == "noise":
-            # Clamp to noise reduction range
-            noise = max(0, min(100, ydata))
+            # Clamp to current axis limits (respects zoom)
+            noise = max(ymin, min(ymax, ydata))
             label_text = f"Noise Reduction: {noise:.0f}%"
         elif self.current_mode == "blend":
-            # Clamp to blend range
-            blend = max(0, min(100, ydata))
+            # Clamp to current axis limits (respects zoom)
+            blend = max(ymin, min(ymax, ydata))
             label_text = f"Enhanced: {blend:.0f}%"
         else:
             return
@@ -1092,28 +1104,37 @@ class SpectrumEditor(ttk.Frame):
     
     def _add_control_point(self, time: float, value: float):
         """Add new control point at specified position"""
+        # Get current axis limits to respect zoom level
+        ymin, ymax = self.ax.get_ylim()
+        
         if self.current_mode == "pitching":
-            value = max(-12, min(12, value))
+            # Clamp to current axis limits (respects zoom)
+            value = max(ymin, min(ymax, value))
             self.pitch_curve.control_points.append(PitchControlPoint(time, value))
             self.pitch_curve.control_points.sort(key=lambda pt: pt.time)
         elif self.current_mode == "reverb":
-            value = max(0, min(100, value))
+            # Clamp to current axis limits (respects zoom)
+            value = max(ymin, min(ymax, value))
             self.reverb_curve.control_points.append(ReverbControlPoint(time, value))
             self.reverb_curve.control_points.sort(key=lambda pt: pt.time)
         elif self.current_mode == "volume":
-            value = max(-50, min(50, value))
+            # Clamp to current axis limits (respects zoom)
+            value = max(ymin, min(ymax, value))
             self.volume_curve.control_points.append(VolumeControlPoint(time, value))
             self.volume_curve.control_points.sort(key=lambda pt: pt.time)
         elif self.current_mode == "instrumental_volume":
-            value = max(-50, min(50, value))
+            # Clamp to current axis limits (respects zoom)
+            value = max(ymin, min(ymax, value))
             self.instrumental_volume_curve.control_points.append(InstrumentalVolumeControlPoint(time, value))
             self.instrumental_volume_curve.control_points.sort(key=lambda pt: pt.time)
         elif self.current_mode == "noise":
-            value = max(0, min(100, value))
+            # Clamp to current axis limits (respects zoom)
+            value = max(ymin, min(ymax, value))
             self.noise_curve.control_points.append(NoiseControlPoint(time, value))
             self.noise_curve.control_points.sort(key=lambda pt: pt.time)
         elif self.current_mode == "blend":
-            value = max(0, min(100, value))
+            # Clamp to current axis limits (respects zoom)
+            value = max(ymin, min(ymax, value))
             self.blend_curve.control_points.append(BlendControlPoint(time, value))
             self.blend_curve.control_points.sort(key=lambda pt: pt.time)
         
