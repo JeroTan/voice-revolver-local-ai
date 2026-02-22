@@ -143,6 +143,7 @@ class TextToSpeechWorkspace(ttk.Frame):
             use_turbo = self.input_panel.get_use_turbo()
             use_default_voice = self.input_panel.get_use_default_voice()
             device = self.input_panel.get_device()
+            hf_token = self.input_panel.get_hf_token()  # Get HuggingFace token
             
             # Update device if changed
             self.tts_wrapper.set_device(device)
@@ -189,6 +190,7 @@ class TextToSpeechWorkspace(ttk.Frame):
                 cfg_weight=cfg_weight,
                 temperature=temperature,
                 use_turbo=use_turbo,
+                hf_token=hf_token,
                 progress_callback=progress_cb
             )
             

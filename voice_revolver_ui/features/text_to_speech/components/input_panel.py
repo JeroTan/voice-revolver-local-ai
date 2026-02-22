@@ -8,6 +8,7 @@ from tkinter import ttk, scrolledtext
 from pathlib import Path
 from typing import Optional, Callable, Tuple
 import logging
+import json
 
 from voice_revolver_ui.components.file_selector import FileSelector
 from voice_revolver_ui.components.labeled_slider import LabeledSlider
@@ -43,6 +44,14 @@ class InputPanel(ttk.Frame):
         # Control variables
         self.use_default_voice_var = tk.BooleanVar(value=False)  # Default: use reference
         self.use_turbo_var = tk.BooleanVar(value=False)  # Default: MTL mode
+        self.hf_token_var = tk.StringVar(value="")  # HuggingFace token for Turbo
+        
+        # Config file path for persistent token storage
+        self.config_path = Path.home() / ".voice_revolver" / "config.json"
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Load saved token
+        self._load_token()
         
         self._setup_ui()
     
@@ -116,11 +125,54 @@ class InputPanel(ttk.Frame):
         # Use Improve Quality checkbox (English only - uses ChatterBoxTTS instead of MTL)
         self.turbo_check = ttk.Checkbutton(
             params_frame,
-            text="Use English Model (Better Quality)",
+            text="Use Turbo to Improve Quality",
             variable=self.use_turbo_var,
             command=self._on_turbo_changed
         )
         self.turbo_check.grid(row=param_row, column=0, sticky=tk.W, pady=(5, 2))
+        param_row += 1
+        
+        # Turbo availability note
+        ttk.Label(
+            params_frame,
+            text="(Only available for English)",
+            foreground="gray",
+            font=("Segoe UI", 8)
+        ).grid(row=param_row, column=0, sticky=tk.W, padx=(20, 0), pady=(0, 5))
+        param_row += 1
+        
+        # HuggingFace Token input (for Turbo model)
+        token_frame = ttk.Frame(params_frame)
+        token_frame.grid(row=param_row, column=0, sticky=(tk.W, tk.E), padx=(20, 0), pady=(0, 5))
+        param_row += 1
+        
+        ttk.Label(token_frame, text="HuggingFace Token:", foreground="gray").pack(side=tk.LEFT)
+        self.token_entry = ttk.Entry(
+            token_frame,
+            textvariable=self.hf_token_var,
+            width=30,
+            show="*",  # Hide token like password
+            state='disabled'  # Start disabled (enabled when Turbo is checked)
+        )
+        self.token_entry.pack(side=tk.LEFT, padx=(5, 0), fill=tk.X, expand=True)
+        
+        # Token save button
+        self.save_token_btn = ttk.Button(
+            token_frame,
+            text="Save",
+            command=self._save_token,
+            width=6,
+            state='disabled'  # Start disabled
+        )
+        self.save_token_btn.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Token note
+        ttk.Label(
+            params_frame,
+            text="A token is required to run Turbo",
+            foreground="gray",
+            font=("Segoe UI", 8)
+        ).grid(row=param_row, column=0, sticky=tk.W, padx=(20, 0), pady=(0, 5))
         param_row += 1
         
         # Quality status label
@@ -245,13 +297,19 @@ class InputPanel(ttk.Frame):
     
     def _on_turbo_changed(self):
         """Handle turbo checkbox change"""
+        # Update quality label
         self._update_quality_label()
+        
+        # Enable/disable token field based on turbo checkbox
+        token_state = 'normal' if self.use_turbo_var.get() else 'disabled'
+        self.token_entry.config(state=token_state)
+        self.save_token_btn.config(state=token_state)
     
     def _update_quality_label(self):
         """Update quality status label"""
         if self.use_turbo_var.get():
             self.quality_label.config(
-                text="Using English TTS model for better quality",
+                text="Turbo mode enabled",
                 foreground="green"
             )
         else:
@@ -311,6 +369,12 @@ class InputPanel(ttk.Frame):
         if not text:
             return False, "Please enter text to synthesize"
         
+        # Check HuggingFace token if using Turbo mode
+        if self.use_turbo_var.get():
+            token = self.get_hf_token()
+            if not token:
+                return False, "Please enter HuggingFace token for Turbo model (get free token from https://huggingface.co/settings/tokens)"
+        
         # Check reference audio if not using default
         if not self.use_default_voice_var.get():
             ref_path = self.get_reference_audio()
@@ -337,6 +401,11 @@ class InputPanel(ttk.Frame):
         else:
             self.turbo_check.config(state='disabled')
         
+        # Token field - enabled only when Turbo is checked
+        token_state = 'normal' if (enabled and self.use_turbo_var.get()) else 'disabled'
+        self.token_entry.config(state=token_state)
+        self.save_token_btn.config(state=token_state)
+        
         # Device dropdown and Generate button
         self.device_combo.config(state='readonly' if enabled else 'disabled')
         self.generate_btn.config(state=state)
@@ -353,3 +422,49 @@ class InputPanel(ttk.Frame):
         self.variation_slider.slider.config(state=state)
         self.variation_slider.value_entry.config(state=state)
         self.variation_slider.reset_btn.config(state=state)
+    
+    def get_hf_token(self) -> Optional[str]:
+        """Get HuggingFace token for Turbo model"""
+        token = self.hf_token_var.get().strip()
+        return token if token else None
+    
+    def _load_token(self):
+        """Load saved HuggingFace token from config file"""
+        try:
+            if self.config_path.exists():
+                with open(self.config_path, 'r') as f:
+                    config = json.load(f)
+                    token = config.get('hf_token', '')
+                    if token:
+                        self.hf_token_var.set(token)
+                        logger.info("Loaded saved HuggingFace token")
+        except Exception as e:
+            logger.warning(f"Failed to load token from config: {e}")
+    
+    def _save_token(self):
+        """Save HuggingFace token to config file"""
+        try:
+            token = self.hf_token_var.get().strip()
+            
+            # Load existing config or create new
+            config = {}
+            if self.config_path.exists():
+                with open(self.config_path, 'r') as f:
+                    config = json.load(f)
+            
+            # Update token
+            config['hf_token'] = token
+            
+            # Save config
+            with open(self.config_path, 'w') as f:
+                json.dump(config, f, indent=2)
+            
+            logger.info("HuggingFace token saved successfully")
+            
+            # Show feedback
+            original_text = self.save_token_btn.config('text')[-1]
+            self.save_token_btn.config(text="✓ Saved")
+            self.after(2000, lambda: self.save_token_btn.config(text=original_text))
+            
+        except Exception as e:
+            logger.error(f"Failed to save token: {e}")

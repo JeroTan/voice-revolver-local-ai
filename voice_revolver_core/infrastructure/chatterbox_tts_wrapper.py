@@ -98,26 +98,31 @@ class ChatterBoxTTSWrapper:
         """Return language code -> display name mapping."""
         return ChatterBoxTTSWrapper.SUPPORTED_LANGUAGES.copy()
     
-    def load_model(self, use_turbo: bool = False) -> Tuple[bool, Optional[str]]:
+    def load_model(self, use_turbo: bool = False, hf_token: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """
         Load TTS model (MTL or Turbo).
         
         Args:
             use_turbo: If True, load Turbo model (English only)
+            hf_token: HuggingFace token for Turbo model download (required for first-time download)
             
         Returns:
             (success, error_message)
         """
         try:
             if use_turbo:
-                # Load English-only model (regular ChatterboxTTS, not Turbo)
+                # Load Turbo model (English only, supports special tokens like [laugh])
                 if self._turbo_model is None:
-                    logger.info("Loading ChatterBox TTS (English)...")
-                    from chatterbox.tts import ChatterboxTTS
+                    logger.info("Loading ChatterBox Turbo TTS (English with special tokens)...")
+                    from chatterbox.tts_turbo import ChatterboxTurboTTS
                     
-                    logger.info(f"Initializing ChatterBox TTS on device: {self._device}")
-                    self._turbo_model = ChatterboxTTS.from_pretrained(device=self._device)
-                    logger.info("ChatterBox TTS loaded successfully")
+                    # Set HF_TOKEN environment variable if provided
+                    if hf_token:
+                        os.environ['HF_TOKEN'] = hf_token
+                    
+                    logger.info(f"Initializing Turbo TTS on device: {self._device}")
+                    self._turbo_model = ChatterboxTurboTTS.from_pretrained(device=self._device)
+                    logger.info("ChatterBox Turbo TTS loaded successfully")
             else:
                 # Load multi-language model
                 if self._mtl_model is None:
@@ -147,6 +152,7 @@ class ChatterBoxTTSWrapper:
         cfg_weight: float = 0.4,
         temperature: float = 0.9,
         use_turbo: bool = False,
+        hf_token: Optional[str] = None,
         progress_callback: Optional[callable] = None
     ) -> Tuple[Optional[Path], Optional[str]]:
         """
@@ -179,14 +185,14 @@ class ChatterBoxTTSWrapper:
             # Load appropriate model
             if use_turbo:
                 if self._turbo_model is None:
-                    success, error = self.load_model(use_turbo=True)
+                    success, error = self.load_model(use_turbo=True, hf_token=hf_token)
                     if not success:
                         return None, error
                 model = self._turbo_model
                 model_name = "Turbo"
             else:
                 if self._mtl_model is None:
-                    success, error = self.load_model(use_turbo=False)
+                    success, error = self.load_model(use_turbo=False, hf_token=hf_token)
                     if not success:
                         return None, error
                 model = self._mtl_model
@@ -237,14 +243,15 @@ class ChatterBoxTTSWrapper:
             # Generate speech
             with torch.no_grad():
                 if use_turbo:
-                    # Turbo model (English only - standard ChatterboxTTS)
-                    # Note: exaggeration and cfg_weight are ignored by this model
+                    # ChatterboxTurboTTS model (English only, supports special tokens like [laugh])
+                    # Note: exaggeration and cfg_weight are not used by Turbo model
                     wav = model.generate(
                         text=text,
                         audio_prompt_path=str(reference_audio_path) if reference_audio_path else None,
                         temperature=temperature,
                         top_p=0.95,
-                        repetition_penalty=1.2
+                        repetition_penalty=1.2,
+                        norm_loudness=True  # Turbo model supports loudness normalization
                     )
                 else:
                     # MTL model (multi-language)
