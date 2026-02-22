@@ -48,6 +48,7 @@ class AudioStems:
     drums: Optional[Path] = None
     bass: Optional[Path] = None
     other: Optional[Path] = None
+    vocals_enhanced: Optional[Path] = None  # Enhanced vocals if improve_vocals was used
     
     def get_instrumental(self) -> Dict[str, Path]:
         """Get all non-vocal stems"""

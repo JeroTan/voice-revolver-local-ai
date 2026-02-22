@@ -55,6 +55,173 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ## Coding Standards
 
+### CRITICAL LESSONS LEARNED
+
+#### Tkinter Menu Management - The "Disabled State" Incident (2026-02-22)
+**Problem:** Spent excessive time trying to programmatically enable menu items that were created with `state="disabled"`.
+- Created menu items: `workspace_menu.add_command(label="...", state="disabled")`
+- Wrote complex `enable_workspace()` logic to change state to "normal"
+- Even had duplicate methods overriding each other
+- User repeatedly suggested: "just remove the disabled state"
+- Agent ignored simple solution, kept adding complexity
+
+**ROOT CAUSE:** **Agent arrogance** - Not listening to user's simple, correct solution
+
+**CORRECT SOLUTION (User's suggestion from the start):**
+```python
+# ✅ SIMPLE - Just create menu items as clickable from the start
+workspace_menu.add_command(label="Vocal Changer")  # No state="disabled"
+workspace_menu.add_command(label="Audio Separation")  # No state="disabled"
+
+# Then later, just set the command:
+workspace_menu.entryconfig(index, command=callback)
+```
+
+**WRONG APPROACH (What agent did):**
+```python
+# ❌ COMPLEX - Creating disabled, then trying to enable programmatically
+workspace_menu.add_command(label="Vocal Changer", state="disabled")
+# ... then writing enable_workspace() method with entryconfig to change state
+# ... then dealing with duplicate methods, debugging state changes, etc.
+```
+
+**LESSON:** 
+- **LISTEN TO THE USER** - They know their codebase and requirements
+- **Start simple** - Don't add `state="disabled"` unless you need it disabled
+- **Avoid premature complexity** - If user says "remove disabled", just remove it
+- **User is right until proven wrong** - Assume user's solution works first
+- **When user repeats the same solution, THEY ARE RIGHT** - Stop being stubborn
+
+**Keywords for future agents:** tkinter menu disabled, state="disabled", enable_workspace, user knows best, listen to user, simple solution, remove complexity
+
+---
+
+#### Dynamic UI Rendering - The "Hardcoded Track List" Mistake (2026-02-22)
+**Problem:** Hardcoded track list to always show 4 stems (vocals, drums, bass, other), regardless of what separator actually produced.
+- **Demucs:** Produces 4 stems ✅
+- **MDX:** Produces only 2 stems (vocals + instrumental) ❌
+- Agent created silent placeholder files for missing stems to force 4-track output
+- User: "this is simple programming paradigm and you made it CONSTANT"
+
+**ROOT CAUSE:** **Lazy implementation** - Assuming all separators produce the same output instead of making it dynamic
+
+**WRONG APPROACH:**
+```python
+# ❌ HARDCODED - Always expect 4 stems
+stem_map = [
+    ('vocals', stems.vocals),
+    ('drums', stems.drums),    # Empty for MDX!
+    ('bass', stems.bass),      # Empty for MDX!
+    ('other', stems.other),
+]
+
+# ❌ Then creating fake silent audio files for missing stems
+sf.write("drums.wav", silence, sr)  # Fake!
+sf.write("bass.wav", silence, sr)   # Fake!
+```
+
+**CORRECT SOLUTION:**
+```python
+# ✅ DYNAMIC - Render only what actually exists
+stem_map = []
+if stems.vocals:
+    stem_map.append(('vocals', stems.vocals))
+if stems.drums:
+    stem_map.append(('drums', stems.drums))
+if stems.bass:
+    stem_map.append(('bass', stems.bass))
+if stems.other:
+    stem_map.append(('other', stems.other))
+
+# Result: Demucs shows 4 tracks, MDX shows 2 tracks
+```
+
+**LESSON:**
+- **Think like a web developer** - API returns variable data, UI renders dynamically
+- **Never hardcode data structures** when the data source varies
+- **Don't fake data** - Creating silent files to fill a hardcoded list is deceptive
+- **Adapt to the data** - Different separators produce different outputs, that's OK
+- **User knows paradigms** - When they reference web dev patterns, they're teaching you
+
+**Real-world analogy:** Like an API returning 3 products but frontend is hardcoded to show 5, so you create 2 fake products. That's wrong!
+
+**Keywords for future agents:** dynamic rendering, hardcoded list, separator output, MDX 2 stems, Demucs 4 stems, variable data, web paradigm, API response rendering
+
+---
+
+#### Windows File Locking & Temp File Management - The "Permission Denied" Issue (2026-02-22)
+**Problem:** Sequential separations (Demucs → MDX) failed with `PermissionError: [Errno 13] Permission denied: vocals.wav`
+- First separation (Demucs) created `vocals.wav`, `drums.wav`, `bass.wav`, `other.wav`
+- Second separation (MDX) tried to overwrite `vocals.wav` → file locked by Windows
+- Additionally, temp directory was doubled: `temp/temp/vocal_changer/` instead of `temp/vocal_changer/`
+- MDX used original audio filename in output: `one_less_lonely_gril_(Vocals)_MDX23C.wav`
+
+**ROOT CAUSES:**
+1. **No file cleanup** - Old separation files locked by Windows file system
+2. **FileManager double-path** - Initialized with `FileManager(app_data_path / "temp")` instead of `FileManager(app_data_path)`
+3. **Original filenames in temp** - Using source filename creates issues with special chars, long names, conflicts
+
+**WRONG APPROACHES:**
+```python
+# ❌ BAD - FileManager initialized incorrectly
+self.file_manager = FileManager(self.app_data_path / "temp")
+# Result: temp/temp/vocal_changer/ (double temp)
+
+# ❌ BAD - Simple file deletion without retry
+wav_file.unlink()  # Fails on Windows if file locked
+
+# ❌ BAD - Using original filename in separators
+separator.separate(audio_path=Path("/path/one_less_lonely_gril.mp3"))
+# Creates: one_less_lonely_gril_(Vocals)_MDX23C.wav
+```
+
+**CORRECT SOLUTIONS:**
+```python
+# ✅ 1. Correct FileManager initialization
+self.file_manager = FileManager(self.app_data_path)
+# Result: temp/vocal_changer/ (correct single temp)
+
+# ✅ 2. Robust cleanup with retry logic and fallback
+for attempt in range(3):
+    try:
+        wav_file.unlink()
+        break
+    except PermissionError:
+        if attempt < 2:
+            time.sleep(0.5)  # Wait for Windows to release lock
+        else:
+            # Fallback: Rename locked file instead of deleting
+            wav_file.rename(wav_file.with_suffix('.wav.old'))
+
+# ✅ 3. Copy to generic temp filename before processing
+temp_input = output_dir / "input_audio.wav"
+shutil.copy2(audio_path, temp_input)
+separator.separate(audio_path=temp_input)  # Always "input_audio.wav"
+
+# ✅ 4. Delete target files before moving (prevents shutil.move conflicts)
+if final_vocals.exists():
+    final_vocals.unlink()
+shutil.move(source_vocals, final_vocals)
+```
+
+**LESSON:**
+- **Windows file locking is real** - Files can stay locked after reading, especially audio files
+- **Always retry file operations** - 3 attempts with delays handles transient locks
+- **Have a fallback strategy** - If deletion fails, rename to `.old` to unblock workflow
+- **Generic temp filenames** - Avoid using original filenames in temp directories
+- **Path initialization matters** - FileManager manages paths, don't add extra subdirs in initialization
+- **Delete before move** - `shutil.move()` fails if target exists, even with overwrite intent
+
+**Testing checklist:**
+1. Run first separator (e.g., Demucs)
+2. Immediately run second separator (e.g., MDX) → Should work without errors
+3. Check directory structure → Should be `temp/{workspace}/` not `temp/temp/{workspace}/`
+4. Check temp files → Should use generic names like `input_audio.wav`, `vocals.wav`
+
+**Keywords for future agents:** Windows file locking, PermissionError, FileExistsError, shutil.move, retry logic, temp file cleanup, generic filenames, double temp path, file_manager initialization
+
+---
+
 ### Logging Best Practices
 - **NEVER use emoji characters in log messages** (🎵, ✅, ⚠️, etc.)
   - Windows console uses cp1252 encoding which doesn't support Unicode emojis
@@ -185,11 +352,55 @@ class ComponentName(ttk.Frame):
         pass
 ```
 
-#### Workspace Switcher Design
+#### Workspace Switcher Design ✅ IMPLEMENTED (Feb 22, 2026)
 - **Main Window** (main_tk.py) provides a menu: `Workspace → [Feature Name]`
 - Each feature is a complete, self-contained UI implementation
-- Switching workspaces replaces the entire content area
+- Switching workspaces replaces the entire content area using `grid()` / `grid_remove()`
 - Features can share components from `components/`
+
+**Implementation Details:**
+```python
+# In main_tk.py:
+# 1. Create workspace container
+self.workspace_container = ttk.Frame(self.root)
+
+# 2. Create workspaces (all created upfront, hidden initially)
+self.vocal_changer_frame = ttk.Frame(self.workspace_container)
+self.audio_separation_workspace = AudioSeparationWorkspace(
+    parent=self.workspace_container,
+    root=self.root,
+    app_data_path=self.app_data_path,
+    log_callback=self.log
+)
+
+# 3. Enable workspaces in menu (set commands for switching)
+self.menu_bar.enable_workspace("vocal_changer", lambda: self._switch_workspace("vocal_changer"))
+self.menu_bar.enable_workspace("audio_separation", lambda: self._switch_workspace("audio_separation"))
+
+# 4. Workspace switching
+def _switch_workspace(self, workspace_id):
+    # Stop audio playback
+    mixer.music.stop()
+    
+    # Hide all workspaces
+    self.vocal_changer_frame.grid_remove()
+    self.audio_separation_workspace.grid_remove()
+    
+    # Show selected workspace
+    if workspace_id == "audio_separation":
+        self.audio_separation_workspace.grid()
+    else:
+        self.vocal_changer_frame.grid()
+    
+    # Update menu checkmarks
+    self.menu_bar.set_active_workspace(workspace_id)
+```
+
+**Menu Bar Implementation (menu_bar.py):**
+- Create menu items as **clickable by default** (no `state="disabled"`)
+- Use `enable_workspace()` to set command callbacks
+- Use `set_active_workspace()` to show/hide checkmarks
+- Active workspace shows ✓ checkmark but remains clickable
 
 #### Migration Safety Rules
 1. **Git commit before each phase** - Enable rollback with `git reset --hard HEAD`
@@ -223,10 +434,16 @@ class ComponentName(ttk.Frame):
   - Extract processing panel (curve editing, processing controls)
   - Extract preview panel (audio playback, export controls)
   
-- **Phase 5:** Implement additional workspaces (Future)
-  - Audio Separation workspace
-  - Text to Speech workspace
-  - Voice Cloning workspace
+- **Phase 5:** Implement additional workspaces ✅ PARTIALLY COMPLETED (Feb 22, 2026)
+  - ✅ Audio Separation workspace - COMPLETED
+    - Created `features/audio_separation/` directory structure
+    - Implemented `AudioSeparationWorkspace` with InputPanel, TrackListPanel, TrackEditor components
+    - Integrated workspace switching in main_tk.py
+    - Full stem separation (vocals, drums, bass, other) with individual track editing
+    - Per-track export with curve application and format conversion
+  - Text to Speech workspace (Future)
+  - Voice Cloning workspace (Future)
+  - Voice Training workspace (Future)
   - Voice Training workspace
 
 ---
@@ -241,15 +458,25 @@ class ComponentName(ttk.Frame):
      - Added `get_workspace_temp_dir(workspace_name)` method
      - Returns workspace-specific temp directory: `temp/{workspace_name}/`
      - Added `cleanup_workspace_temp(workspace_name)` for workspace-specific cleanup
+     - **CRITICAL:** FileManager initialized with `FileManager(app_data_path)` NOT `FileManager(app_data_path / "temp")`
+       - ❌ WRONG: `FileManager(app_data_path / "temp")` → creates `temp/temp/{workspace}/`
+       - ✅ CORRECT: `FileManager(app_data_path)` → creates `temp/{workspace}/`
   2. **UI Updates** (`voice_revolver_ui/main_tk.py`):
      - Added `CURRENT_WORKSPACE = "vocal_changer"` constant
      - Updated all temp directory references to use `get_workspace_temp_dir(CURRENT_WORKSPACE)`
      - Separation files: `temp/vocal_changer/separation/`
      - Preview files: `temp/vocal_changer/preview/`
      - Cache files: `temp/vocal_changer/separation/vocals_enhanced.wav`
+     - **FileManager initialization:** `self.file_manager = FileManager(self.app_data_path)`
   3. **Service Layer Updates** (`voice_replacement_service.py`):
      - Process method now accepts `output_dir` parameter for workspace-specific temp
      - Caller passes `get_workspace_temp_dir("vocal_changer")` as output directory
+  4. **File Cleanup & Conflict Prevention** (`audio_separation/workspace.py`):
+     - **Robust cleanup before separation:** Retry logic (3 attempts, 500ms delays) for locked files
+     - **Fallback strategy:** Rename to `.wav.old` if deletion fails
+     - **Generic temp filenames:** Copy input to `input_audio.wav` before processing
+     - **Cleanup after separation:** Delete temp input file to avoid clutter
+     - **Separator output handling:** Delete target files before moving to prevent conflicts
 - **Directory Structure:**
   ```
   temp/

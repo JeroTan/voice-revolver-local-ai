@@ -130,6 +130,9 @@ class SpectrumEditor(ttk.Frame):
         self.playback_line = None  # Vertical line showing playback position on plot
         self.programmatic_slider_update = False  # Flag to prevent marker updates during auto-updates
         
+        # Zoom factor for spectrum visualization (1.0 = default, 0.5 = zoomed out, 2.0 = zoomed in)
+        self.zoom_factor = 1.0
+        
         # Callback for applying changes
         self.apply_changes_callback = None
         
@@ -157,13 +160,13 @@ class SpectrumEditor(ttk.Frame):
         canvas_frame = ttk.Frame(main_container)
         canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Create matplotlib figure (single plot)
-        self.fig = Figure(figsize=(10, 6), dpi=100)
+        # Create matplotlib figure (single plot) - reduced height for better track overview
+        self.fig = Figure(figsize=(10, 4), dpi=100)
         self.ax = self.fig.add_subplot(111)
         self.ax.set_xlabel("Time (seconds)")
         self.ax.grid(True, alpha=0.3)
         
-        # Embed in tkinter
+        # Embed matplotlib canvas
         self.canvas = FigureCanvasTkAgg(self.fig, master=canvas_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
@@ -247,7 +250,7 @@ class SpectrumEditor(ttk.Frame):
             to=0,      # Bottom = 0%
             variable=self.volume_var,
             orient=tk.VERTICAL,
-            length=120,
+            length=80,
             command=self._on_volume_change
         )
         self.volume_slider.pack(pady=5)
@@ -295,9 +298,9 @@ class SpectrumEditor(ttk.Frame):
         mode_frame = ttk.Frame(self)
         mode_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
         
-        # Center the radio buttons
+        # Align radio buttons to the left (justify-start)
         button_container = ttk.Frame(mode_frame)
-        button_container.pack(expand=True)
+        button_container.pack(side=tk.LEFT, padx=10)
         
         self.mode_var = tk.StringVar(value="pitching")
         
@@ -358,6 +361,27 @@ class SpectrumEditor(ttk.Frame):
         )
         self.blend_radio.pack(side=tk.LEFT, padx=20)
         self.blend_radio.pack_forget()  # Hidden initially until enhanced vocals loaded
+        
+        # Zoom control (right side of mode_frame, same row as mode buttons)
+        zoom_control_frame = ttk.Frame(mode_frame)
+        zoom_control_frame.pack(side=tk.RIGHT, padx=10)
+        
+        ttk.Label(zoom_control_frame, text="Zoom:", font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.zoom_var = tk.DoubleVar(value=1.0)
+        self.zoom_slider = ttk.Scale(
+            zoom_control_frame,
+            from_=0.5,
+            to=2.0,
+            variable=self.zoom_var,
+            orient=tk.HORIZONTAL,
+            length=200,
+            command=self._on_zoom_change
+        )
+        self.zoom_slider.pack(side=tk.LEFT, padx=5)
+        
+        self.zoom_label = ttk.Label(zoom_control_frame, text="100%", font=("Segoe UI", 9), width=5)
+        self.zoom_label.pack(side=tk.LEFT)
         
         # Connect matplotlib events for interactive editing
         self.canvas.mpl_connect('button_press_event', self._on_click)
@@ -715,7 +739,8 @@ class SpectrumEditor(ttk.Frame):
         """Draw pitch curve editing view"""
         self.ax.set_ylabel("Pitch Shift (semitones)")
         self.ax.set_title("Pitch Automation (Click to add points, drag to adjust)")
-        self.ax.set_ylim(-12, 12)
+        ylim = 12 * self.zoom_factor
+        self.ax.set_ylim(-ylim, ylim)
         
         # Draw zero line
         self.ax.axhline(0, color='gray', linestyle='--', linewidth=1, alpha=0.5)
@@ -736,7 +761,8 @@ class SpectrumEditor(ttk.Frame):
         """Draw reverb strength editing view"""
         self.ax.set_ylabel("Reverb Wet Mix (%)")
         self.ax.set_title("Reverb Strength (Click to add points)")
-        self.ax.set_ylim(0, 100)
+        ylim = 100 * self.zoom_factor
+        self.ax.set_ylim(0, ylim)
         
         # Plot existing control points and curve
         if len(self.reverb_curve.control_points) > 0:
@@ -754,7 +780,8 @@ class SpectrumEditor(ttk.Frame):
         """Draw volume automation editing view"""
         self.ax.set_ylabel("Volume Adjustment (dB)")
         self.ax.set_title("Volume Automation (Click to add points)")
-        self.ax.set_ylim(-50, 50)
+        ylim = 50 * self.zoom_factor
+        self.ax.set_ylim(-ylim, ylim)
         
         # Draw zero line (unity gain)
         self.ax.axhline(0, color='gray', linestyle='--', linewidth=1, alpha=0.5, label='0dB (Unity)')
@@ -775,7 +802,8 @@ class SpectrumEditor(ttk.Frame):
         """Draw instrumental volume automation editing view"""
         self.ax.set_ylabel("Instrumental Volume (dB)")
         self.ax.set_title("Instrumental Volume Automation (Click to add points)")
-        self.ax.set_ylim(-50, 50)
+        ylim = 50 * self.zoom_factor
+        self.ax.set_ylim(-ylim, ylim)
         
         # Draw zero line (unity gain)
         self.ax.axhline(0, color='gray', linestyle='--', linewidth=1, alpha=0.5, label='0dB (Unity)')
@@ -796,7 +824,8 @@ class SpectrumEditor(ttk.Frame):
         """Draw noise reduction editing view"""
         self.ax.set_ylabel("Noise Reduction (%)")
         self.ax.set_title("Noise Reduction Strength (Click to add points)")
-        self.ax.set_ylim(0, 100)
+        ylim = 100 * self.zoom_factor
+        self.ax.set_ylim(0, ylim)
         
         # Plot existing control points and curve
         if len(self.noise_curve.control_points) > 0:
@@ -821,7 +850,8 @@ class SpectrumEditor(ttk.Frame):
         
         self.ax.set_ylabel("Blend Mix (%)")
         self.ax.set_title("Blend Mode: Original (blue) vs Enhanced (green) - Click to adjust blend curve")
-        self.ax.set_ylim(0, 100)
+        ylim = 100 * self.zoom_factor
+        self.ax.set_ylim(0, ylim)
         
         # Downsample for performance
         hop_length = max(1, len(self.audio_data) // 2000)
@@ -1205,6 +1235,17 @@ class SpectrumEditor(ttk.Frame):
                 mixer.music.set_volume(volume)
         except Exception as e:
             logger.error(f"Volume change error: {e}")
+    
+    def _on_zoom_change(self, value):
+        """Handle zoom slider changes"""
+        try:
+            self.zoom_factor = float(value)
+            # Update zoom label to show percentage
+            self.zoom_label.config(text=f"{int(self.zoom_factor * 100)}%")
+            # Redraw spectrum with new zoom factor
+            self._redraw_spectrum()
+        except Exception as e:
+            logger.error(f"Zoom change error: {e}")
     
     def set_enabled(self, enabled: bool):
         """Enable or disable the spectrum editor"""

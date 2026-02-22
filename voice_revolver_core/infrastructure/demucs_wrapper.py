@@ -150,6 +150,15 @@ class DemucsWrapper:
             for i, stem_name in enumerate(stem_names):
                 stem_wav = sources[i].cpu()
                 stem_path = output_dir / f"{stem_name}.wav"
+                
+                # Delete existing file to avoid conflicts
+                if stem_path.exists():
+                    try:
+                        stem_path.unlink()
+                        logger.info(f"Deleted existing {stem_name}.wav")
+                    except Exception as e:
+                        logger.warning(f"Could not delete existing {stem_name}.wav: {e}")
+                
                 torchaudio.save(str(stem_path), stem_wav, self._sample_rate)
                 stems[stem_name] = stem_path
                 logger.info(f"Saved {stem_name}: {stem_path}")

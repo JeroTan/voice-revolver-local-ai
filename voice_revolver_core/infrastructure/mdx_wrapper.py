@@ -154,49 +154,82 @@ class MDXWrapper:
             if progress_callback:
                 progress_callback(70, "Processing stems...")
             
-            # Get vocals and instrumental paths
+            # Get vocals and instrumental paths from JSON result
             vocals_path = Path(result_data["vocals_path"])
             instrumental_path = Path(result_data.get("instrumental_path", ""))
+            
+            # Check if paths are absolute, if not, assume they're in output_dir
+            if not vocals_path.is_absolute():
+                vocals_path = output_dir / vocals_path.name
+            if instrumental_path and not instrumental_path.is_absolute():
+                instrumental_path = output_dir / instrumental_path.name
+            
+            logger.info(f"MDX returned vocals path: {vocals_path}")
+            logger.info(f"MDX returned instrumental path: {instrumental_path}")
+            
+            # If exact paths don't exist, search for MDX output files by pattern
+            if not vocals_path.exists():
+                logger.warning(f"Vocals path from JSON doesn't exist: {vocals_path}")
+                logger.info("Searching for vocals file by pattern...")
+                vocals_files = list(output_dir.glob("*_(Vocals)_*.wav"))
+                if vocals_files:
+                    vocals_path = vocals_files[0]
+                    logger.info(f"Found vocals file: {vocals_path}")
+                else:
+                    error_msg = f"No vocals file found in {output_dir}"
+                    logger.error(error_msg)
+                    return None, error_msg
+            
+            if instrumental_path and not instrumental_path.exists():
+                logger.warning(f"Instrumental path from JSON doesn't exist: {instrumental_path}")
+                logger.info("Searching for instrumental file by pattern...")
+                instrumental_files = list(output_dir.glob("*_(Instrumental)_*.wav"))
+                if instrumental_files:
+                    instrumental_path = instrumental_files[0]
+                    logger.info(f"Found instrumental file: {instrumental_path}")
             
             # Rename to standard format (using generic names)
             final_vocals = output_dir / "vocals.wav"
             final_other = output_dir / "other.wav"
             
+            # Delete existing files to avoid conflicts
+            if final_vocals.exists():
+                try:
+                    final_vocals.unlink()
+                    logger.info(f"Deleted existing vocals.wav")
+                except Exception as e:
+                    logger.warning(f"Could not delete existing vocals.wav: {e}")
+            
+            if final_other.exists():
+                try:
+                    final_other.unlink()
+                    logger.info(f"Deleted existing other.wav")
+                except Exception as e:
+                    logger.warning(f"Could not delete existing other.wav: {e}")
+            
             if vocals_path.exists():
                 shutil.move(str(vocals_path), str(final_vocals))
                 logger.info(f"Saved vocals: {final_vocals}")
+            else:
+                error_msg = f"Vocals file not found: {vocals_path}"
+                logger.error(error_msg)
+                return None, error_msg
             
-            if instrumental_path.exists():
+            if instrumental_path and instrumental_path.exists():
                 shutil.move(str(instrumental_path), str(final_other))
                 logger.info(f"Saved instrumental as 'other': {final_other}")
             
             if progress_callback:
-                progress_callback(85, "Creating placeholder stems...")
-            
-            # Create silent placeholders for drums/bass (MDX only does vocals/instrumental)
-            import soundfile as sf
-            import numpy as np
-            
-            # Load vocals to get duration and sample rate
-            vocals_audio, sr = sf.read(str(final_vocals))
-            silence = np.zeros_like(vocals_audio)
-            
-            final_drums = output_dir / "drums.wav"
-            final_bass = output_dir / "bass.wav"
-            
-            sf.write(str(final_drums), silence, sr)
-            sf.write(str(final_bass), silence, sr)
-            
-            logger.info("Created placeholder drums and bass (silent)")
-            
-            if progress_callback:
                 progress_callback(100, "MDX separation complete!")
+            
+            # MDX produces only 2 stems (vocals + instrumental)
+            # Don't create fake silent stems - return only what was actually separated
+            logger.info("MDX produced 2 stems: vocals + instrumental (as 'other')")
             
             return {
                 'vocals': final_vocals,
-                'drums': final_drums,
-                'bass': final_bass,
-                'other': final_other
+                'other': final_other  # Instrumental labeled as 'other'
+                # drums and bass are None - UI will render only vocals + other
             }, None
             
         except subprocess.TimeoutExpired:

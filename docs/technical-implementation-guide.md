@@ -881,29 +881,61 @@ converted_original_sr = librosa.resample(
 
 ### 2. Temporary File Management
 
-**Pattern**:
+**Workspace-Based Pattern with FileManager (CURRENT)**:
 ```python
-import tempfile
 from pathlib import Path
+from voice_revolver_core.domain.file_manager import FileManager
 
-class VoiceReplacementService:
-    def __init__(self):
-        self.temp_dir = Path(tempfile.gettempdir()) / "voice_revolver"
-        self.temp_dir.mkdir(exist_ok=True)
-    
-    def process(self, input_path):
-        # Create unique temp files
-        vocals = self.temp_dir / f"vocals_{uuid.uuid4()}.wav"
-        converted = self.temp_dir / f"converted_{uuid.uuid4()}.wav"
-        
+# ✅ CORRECT: Initialize FileManager with app_data_path (NOT app_data_path / "temp")
+app_data_path = Path.home() / "AppData" / "Local" / "VoiceRevolverAI"
+file_manager = FileManager(app_data_path)  # Creates temp/ subdirectory internally
+
+# Get workspace-specific temp directory
+workspace_temp = file_manager.get_workspace_temp_dir("audio_separation")
+# Returns: {app_data_path}/temp/audio_separation/
+
+# Directory structure created:
+# temp/
+# ├── audio_separation/
+# │   └── separation/      # Separated stems
+# ├── vocal_changer/
+# │   ├── separation/      # Cached stems
+# │   └── preview/         # Processed previews
+# └── ... (other workspaces)
+
+# Robust file cleanup with retry logic (handles Windows file locking)
+import time
+
+for wav_file in output_dir.glob("*.wav"):
+    for attempt in range(3):
         try:
-            # Processing...
-            ...
-        finally:
-            # Cleanup
-            vocals.unlink(missing_ok=True)
-            converted.unlink(missing_ok=True)
+            wav_file.unlink()
+            break
+        except PermissionError:
+            if attempt < 2:
+                time.sleep(0.5)  # Wait for file lock release
+            else:
+                # Fallback: rename locked file
+                wav_file.rename(wav_file.with_suffix('.wav.old'))
+
+# Generic temp filenames (avoid using original audio filename)
+import shutil
+temp_input = output_dir / "input_audio.wav"
+shutil.copy2(original_audio_path, temp_input)
+separator.separate(audio_path=temp_input)  # Process generic name
+
+# Cleanup after processing
+if temp_input.exists():
+    temp_input.unlink()
 ```
+
+**Key Points:**
+- **FileManager manages paths internally** - Don't add `/ "temp"` when initializing
+- **Workspace isolation** - Each workspace has its own temp subdirectory
+- **Retry logic essential** - Windows file locking requires 3-attempt retry with delays
+- **Fallback strategy** - Rename to `.old` if deletion fails after retries
+- **Generic filenames** - Use `input_audio.wav`, `vocals.wav` not original filenames
+- **Delete before move** - Always `unlink()` target before `shutil.move()` to prevent conflicts
 
 ### 3. Progress Tracking
 

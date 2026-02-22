@@ -47,6 +47,7 @@ from voice_revolver_core.domain.base import VoiceConversionParams, AudioStems
 from voice_revolver_ui.features.startup_dialog import StartupDialog
 from voice_revolver_ui.features.loading_dialog import LoadingDialog
 from voice_revolver_ui.features.menu_bar import MenuBar
+from voice_revolver_ui.features.audio_separation import AudioSeparationWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ class VoiceRevolverApp:
         if not ffmpeg_success:
             self.log(f"[WARNING] FFmpeg warning: {ffmpeg_error}")
         
-        self.file_manager = FileManager(self.app_data_path / "temp")
+        self.file_manager = FileManager(self.app_data_path)
         self.progress_tracker = ProgressTracker()
         self.project_service = ProjectService()
         
@@ -156,13 +157,22 @@ class VoiceRevolverApp:
     def _build_ui(self):
         """Build the UI"""
         # Menu bar
-        self.menu_bar = MenuBar(self.root, on_toggle_logs=self._toggle_log_window)
+        self.menu_bar = MenuBar(self.root, on_toggle_logs=self._toggle_log_window, log_callback=self.log)
         
-        # Main container with responsive grid
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Workspace container (holds all workspaces)
+        self.workspace_container = ttk.Frame(self.root)
+        self.workspace_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
+        
+        # Main container with responsive grid (VOCAL CHANGER WORKSPACE)
+        main_frame = ttk.Frame(self.workspace_container, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.workspace_container.columnconfigure(0, weight=1)
+        self.workspace_container.rowconfigure(0, weight=1)
+        
+        # Store reference to vocal_changer workspace
+        self.vocal_changer_frame = main_frame
         
         # Phase 2: Two-column layout
         # Column 0: Controls (left, 40%)
@@ -502,7 +512,55 @@ class VoiceRevolverApp:
         
         progress_frame.columnconfigure(0, weight=1)
         
+        # Create Audio Separation workspace (hidden initially)
+        self.audio_separation_workspace = AudioSeparationWorkspace(
+            parent=self.workspace_container,
+            root=self.root,
+            app_data_path=self.app_data_path,
+            device=self.device,
+            log_callback=self.log
+        )
+        self.audio_separation_workspace.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.audio_separation_workspace.grid_remove()  # Hidden initially
+        
+        # Enable both workspaces in menu
+        self.menu_bar.enable_workspace("vocal_changer", lambda: self._switch_workspace("vocal_changer"))
+        self.menu_bar.enable_workspace("audio_separation", lambda: self._switch_workspace("audio_separation"))
+        
+        # Set initial active workspace
+        self.current_workspace = "vocal_changer"
+        self.menu_bar.set_active_workspace("vocal_changer")
+        
     # End of _build_ui
+    
+    def _switch_workspace(self, workspace_id):
+        """Switch between workspaces.
+        
+        Args:
+            workspace_id: ID of workspace to switch to ("vocal_changer" or "audio_separation")
+        """
+        # Stop any playing audio
+        if PYGAME_AVAILABLE:
+            try:
+                mixer.music.stop()
+            except:
+                pass
+        
+        # Hide all workspaces
+        self.vocal_changer_frame.grid_remove()
+        self.audio_separation_workspace.grid_remove()
+        
+        # Show selected workspace
+        if workspace_id == "audio_separation":
+            self.audio_separation_workspace.grid()
+            self.current_workspace = "audio_separation"
+        else:
+            self.vocal_changer_frame.grid()
+            self.current_workspace = "vocal_changer"
+        
+        # Update menu bar
+        self.menu_bar.set_active_workspace(workspace_id)
+        self.log(f"Switched to {workspace_id.replace('_', ' ').title()} workspace")
     
     def _enable_spectrum_editor(self, enable=True):
         """Enable or disable spectrum editor and update label"""
