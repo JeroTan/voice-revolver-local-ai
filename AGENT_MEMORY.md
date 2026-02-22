@@ -233,6 +233,45 @@ class ComponentName(ttk.Frame):
 
 ## History Log
 
+### 2026-02-22 | Workspace Temp Directory Structure
+- **Topic:** Implemented workspace-prefixed temp directory organization for multi-workspace support
+- **Motivation:** Prepare for multiple workspaces (audio_separation, text_to_speech, voice_cloning, voice_training) by organizing temp files into workspace-specific subdirectories to prevent file conflicts and clutter
+- **Implementation:**
+  1. **FileManager Domain Updates** (`voice_revolver_core/domain/file_manager.py`):
+     - Added `get_workspace_temp_dir(workspace_name)` method
+     - Returns workspace-specific temp directory: `temp/{workspace_name}/`
+     - Added `cleanup_workspace_temp(workspace_name)` for workspace-specific cleanup
+  2. **UI Updates** (`voice_revolver_ui/main_tk.py`):
+     - Added `CURRENT_WORKSPACE = "vocal_changer"` constant
+     - Updated all temp directory references to use `get_workspace_temp_dir(CURRENT_WORKSPACE)`
+     - Separation files: `temp/vocal_changer/separation/`
+     - Preview files: `temp/vocal_changer/preview/`
+     - Cache files: `temp/vocal_changer/separation/vocals_enhanced.wav`
+  3. **Service Layer Updates** (`voice_replacement_service.py`):
+     - Process method now accepts `output_dir` parameter for workspace-specific temp
+     - Caller passes `get_workspace_temp_dir("vocal_changer")` as output directory
+- **Directory Structure:**
+  ```
+  temp/
+  ├── vocal_changer/          # Current workspace ✅ IMPLEMENTED
+  │   ├── separation/         # Separated stems
+  │   └── preview/            # Processed audio previews
+  ├── audio_separation/       # Future workspace (ready)
+  ├── text_to_speech/         # Future workspace (ready)
+  ├── voice_cloning/          # Future workspace (ready)
+  └── voice_training/         # Future workspace (ready)
+  ```
+- **Test Organization:**
+  - Created `tests/` folder for all test files
+  - Moved `test_core.py` → `tests/test_core.py`
+  - Moved `test_resemble_enhance.py` → `tests/test_resemble_enhance.py`
+- **Results:**
+  - ✅ All temp files now organized by workspace
+  - ✅ No file conflicts between future workspaces
+  - ✅ Cache invalidation still works correctly
+  - ✅ Ready for multi-workspace architecture
+  - ✅ Tests organized in dedicated folder
+
 ### 2026-02-22 | UI Component Architecture Implementation
 - **Topic:** Refactored UI into component-based architecture for scalability
 - **Motivation:** 2286-line main_tk.py was becoming unmaintainable, needed modular structure for future features

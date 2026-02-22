@@ -50,6 +50,9 @@ from voice_revolver_ui.features.menu_bar import MenuBar
 
 logger = logging.getLogger(__name__)
 
+# Workspace identifier for temp directory organization
+CURRENT_WORKSPACE = "vocal_changer"
+
 
 class VoiceRevolverApp:
     def __init__(self, root, device, app_data_path):
@@ -571,19 +574,18 @@ class VoiceRevolverApp:
             progress_cb(10, "Separating vocals from song...")
             self.log(f"Processing: {Path(self.original_file).name}")
             
-            output_dir = self.file_manager.temp_dir / "separation"
+            output_dir = self.file_manager.get_workspace_temp_dir(CURRENT_WORKSPACE) / "separation"
             
-            # Clean up old wav files (except cached enhanced vocals)
+            # Clean up old separation files (except cached enhanced vocals from current file)
             if output_dir.exists():
                 for wav_file in output_dir.glob("*.wav"):
-                    # Keep enhanced vocals cache
+                    # Keep enhanced vocals cache (they're cleared when new file is selected)
                     if wav_file.name == "vocals_enhanced.wav":
-                        self.log(f"Preserving cached enhanced vocals")
                         continue
                     try:
                         wav_file.unlink()
                     except Exception as e:
-                        self.log(f"Warning: Could not delete {wav_file.name}: {e}")
+                        self.log(f"[WARNING] Could not delete {wav_file.name}: {e}")
                 self.log("Cleaned up old separation files")
             
             output_dir.mkdir(exist_ok=True, parents=True)
@@ -846,7 +848,7 @@ class VoiceRevolverApp:
             from voice_revolver_core.infrastructure.audio_processor import AudioProcessor
             
             # Create temp directory for processed preview
-            preview_dir = self.file_manager.temp_dir / "preview"
+            preview_dir = self.file_manager.get_workspace_temp_dir(CURRENT_WORKSPACE) / "preview"
             preview_dir.mkdir(exist_ok=True, parents=True)
             
             # Start with original vocals (always use the original, not the preview)
@@ -1114,6 +1116,15 @@ class VoiceRevolverApp:
             filename = Path(file_path).name
             self.original_label.config(text=filename, foreground="black")
             self.log(f"Original file: {filename}")
+            
+            # Invalidate cached enhanced vocals since we have a new audio file
+            cached_enhanced = self.file_manager.get_workspace_temp_dir(CURRENT_WORKSPACE) / "separation" / "vocals_enhanced.wav"
+            if cached_enhanced.exists():
+                try:
+                    cached_enhanced.unlink()
+                    self.log("Cleared old enhanced vocals cache (new audio file)")
+                except Exception as e:
+                    self.log(f"[WARNING] Could not clear cache: {e}")
             
             # Phase 2: Enable separation button when original file selected
             if not self.processing:
@@ -1441,6 +1452,7 @@ class VoiceRevolverApp:
                 reference_voice_path=Path(self.reference_file),
                 voice_params=voice_params,
                 output_format=output_format,
+                output_dir=self.file_manager.get_workspace_temp_dir(CURRENT_WORKSPACE),
                 vocal_only=self.vocal_only_var.get(),
                 reference_mode=self.reference_mode.get(),  # Pass dual-reference mode
                 progress_callback=progress_callback
@@ -1583,7 +1595,7 @@ class VoiceRevolverApp:
             return
         
         # Determine file paths from processing output
-        temp_dir = self.app_data_path / "temp" / "temp"
+        temp_dir = self.file_manager.get_workspace_temp_dir(CURRENT_WORKSPACE)
         
         # 1. Original audio (user input)
         self.original_audio_path = self.original_file

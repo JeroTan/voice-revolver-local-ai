@@ -45,6 +45,42 @@ class FileManager:
         """Get exports directory path"""
         return self._exports_path
     
+    def get_workspace_temp_dir(self, workspace_name: str) -> Path:
+        """
+        Get workspace-specific temp directory.
+        
+        Args:
+            workspace_name: Name of workspace (e.g., 'vocal_changer', 'audio_separation')
+            
+        Returns:
+            Path to workspace temp directory (e.g., temp/vocal_changer/)
+        """
+        return self._temp_path / workspace_name
+    
+    def cleanup_workspace_temp(self, workspace_name: str) -> int:
+        """
+        Clean up temp files for specific workspace, return count of deleted files.
+        
+        Args:
+            workspace_name: Name of workspace to clean
+            
+        Returns:
+            Number of files deleted
+        """
+        workspace_dir = self.get_workspace_temp_dir(workspace_name)
+        if not workspace_dir.exists():
+            return 0
+        
+        count = 0
+        for item in workspace_dir.rglob("*"):
+            if item.is_file():
+                try:
+                    item.unlink()
+                    count += 1
+                except Exception:
+                    pass
+        return count
+    
     def generate_temp_filename(self, extension: str) -> str:
         """Generate auto filename for temp file"""
         return generate_auto_filename(extension)
