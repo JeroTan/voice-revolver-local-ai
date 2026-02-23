@@ -1,6 +1,6 @@
 # Agent Memory
 
-> This file serves as AI memory for the project. Update it with important highlights after each session. Git-sync across machines.
+> This file serves as AI memory for the project. Update it with important highlights after each session. So that even if we have diverse AI-Agent to use, we share the same brain-cells across different machine!
 
 ## Summary
 
@@ -423,7 +423,7 @@ voice_revolver_ui/
     ├── voice_cloning/         # ✅ Voice cloning workspace (COMPLETED - 2026-02-23)
     ├── voice_enhancement/     # ✅ Voice enhancement workspace (COMPLETED - 2026-02-23)
     ├── track_merger/          # ✅ Track merger workspace (COMPLETED - 2026-02-23)
-    └── voice_training/        # Future: Voice training workspace
+    └── audio_training/        # ✅ Audio training workspace (COMPLETED - 2026-02-23)
 ```
 
 #### Implemented Components
@@ -630,7 +630,7 @@ def _switch_workspace(self, workspace_id):
 
 ### 2026-02-22 | Workspace Temp Directory Structure
 - **Topic:** Implemented workspace-prefixed temp directory organization for multi-workspace support
-- **Motivation:** Prepare for multiple workspaces (audio_separation, text_to_speech, voice_cloning, voice_training) by organizing temp files into workspace-specific subdirectories to prevent file conflicts and clutter
+- **Motivation:** Prepare for multiple workspaces (audio_separation, text_to_speech, voice_cloning, audio_training) by organizing temp files into workspace-specific subdirectories to prevent file conflicts and clutter
 - **Implementation:**
   1. **FileManager Domain Updates** (`voice_revolver_core/domain/file_manager.py`):
      - Added `get_workspace_temp_dir(workspace_name)` method
@@ -666,7 +666,7 @@ def _switch_workspace(self, workspace_id):
   ├── voice_cloning/          # ✅ Voice cloning workspace (COMPLETED 2026-02-23)
   ├── voice_enhancement/      # ✅ Voice enhancement workspace (COMPLETED 2026-02-23)
   ├── track_merger/           # ✅ Track merger workspace (COMPLETED 2026-02-23)
-  └── voice_training/         # Future workspace (ready)
+  └── audio_training/         # ✅ Audio training workspace (COMPLETED 2026-02-23)
   ```
 - **Test Organization:**
   - Created `tests/` folder for all test files
@@ -1944,7 +1944,8 @@ voice_revolver_core/
      - **Protection**: Slider (0.0-0.5, default: 0.33) - "Consonant protection"
      - **Filter Radius**: Slider (0-7, default: 3) - "Pitch smoothing"
      - **RMS Mix Rate**: Slider (0.0-1.0, default: 0.25) - "Volume envelope mix"
-     - "Reset All to Defaults" button
+     - **Button Layout**: "Start Processing" and "Reset All to Defaults" side-by-side in RVC params section
+       - Export button remains alone at bottom of panel (separate from processing controls)
   
   4. **Non-Compounding Curve Editing**:
      - `processed.wav`: Original voice clone output (IMMUTABLE)
@@ -2148,6 +2149,188 @@ voice_revolver_core/
   - **Blend curve goes FIRST**: Blend → Pitch → Volume → Reverb (not the other way around)
   - **Sample rate preservation**: Enhanced must match original to prevent visualization issues
   - **Blend mode is the whole point**: Never disable it in this workspace
+
+---
+
+### 2026-02-23 | Audio Training Workspace Implementation ✅ COMPLETED
+- **Topic:** Implemented Audio Training workspace for RVC voice model training with Windows single-GPU compatibility
+- **Motivation:** Enable users to train custom RVC voice models from audio samples for use in Voice Cloning workspace, overcoming Windows compatibility issues
+- **Implementation:**
+  1. **Workspace Structure** (`voice_revolver_ui/features/audio_training/`):
+     - `workspace.py` (650+ lines): Main workspace orchestration with 4-step training pipeline
+     - `components/input_panel.py` (400+ lines): Training parameters and controls
+     - `components/output_panel.py` (200+ lines): Progress tracking and model export
+  
+  2. **4-Step Training Pipeline**:
+     - **Step 1: Preprocess** - Split audio into 3-second segments at -40dB silence threshold
+     - **Step 2: Feature Extraction** - Extract vocal features (embeddings) with configurable F0 method
+     - **Step 3: Train Model** - Train RVC model with configurable epochs, batch size, save frequency
+     - **Step 4: Build Index** - Create FAISS index for feature retrieval (used by Voice Cloning)
+  
+  3. **Training Parameters UI**:
+     - **Model Name**: Text entry (auto-validated, no spaces/special chars)
+     - **Audio File**: FileSelector (.wav, .mp3, .flac) with min 15 seconds validation
+     - **F0 Method**: Dropdown (rmvpe, harvest, crepe, pm) - Pitch detection algorithm
+     - **Target Sample Rate**: Dropdown (32000, 40000, 48000 Hz) - Model quality vs. speed
+     - **CPU Threads**: Slider (1-16, default: 4) - Preprocessing parallelization
+     - **Epochs**: Slider (50-1000, default: 200) - Training iterations
+     - **Batch Size**: Slider (1-32, default: 8) - GPU memory vs. speed
+     - **Save Frequency**: Slider (10-100, default: 50) - Checkpoint interval
+     - **Auto-Increment Checkpoint**: Checkbox - Automatically select best epoch after training
+  
+  4. **Progress Tracking**:
+     - Real-time log output in scrolled text widget
+     - Step-by-step progress indicators (Preprocess → Extract → Train → Index)
+     - Training epoch counter with ETA estimation
+     - GPU utilization and loss curve display (future enhancement)
+  
+  5. **Model Export**:
+     - Checkpoint selector dropdown (lists all `sample_*e_*s.pth` files)
+     - Auto-selects latest checkpoint if auto-increment enabled
+     - Export as `.zip` containing: model file (.pth), index file (.index), config.json
+     - Exported to user-selected directory with model name
+     - Compatible with Voice Cloning workspace RVC mode
+  
+  6. **Windows Single-GPU Compatibility Fixes** (5 critical fixes):
+     
+     **Fix 1: Skip Distributed Training for Windows**
+     - **Problem**: `RuntimeError: makeDeviceForHostname(): unsupported gloo backend hostname`
+     - **Cause**: PyTorch distributed training (gloo/nccl) breaks on Windows single-GPU (RTX 4050)
+     - **Solution**: Skip `dist.init_process_group()` for Windows single-GPU setups
+     - **Implementation**: 
+       ```python
+       # rvc/train/train.py
+       import platform
+       skip_distributed = platform.system() == "Windows" and torch.cuda.device_count() == 1
+       if not skip_distributed:
+           dist.init_process_group(...)
+       ```
+     
+     **Fix 2: Disable Mute Files for Training**
+     - **Problem**: `FileNotFoundError: logs/mute/sliced_audios/mute40000.wav`
+     - **Cause**: RVC expects pre-generated silent audio files for data augmentation
+     - **Solution**: Set `include_mutes=0` in feature extraction command
+     - **Implementation**: 
+       ```python
+       # RVC extract command
+       cmd = f"{venv_python} rvc/train/extract/extract_f0_rmvpe.py 0 0 0 {experiment_dir} {include_mutes}"
+       # include_mutes=0 (no mute files needed)
+       ```
+     
+     **Fix 3: PowerShell Empty String Dropping**
+     - **Problem**: Empty string `""` dropped by PowerShell, shifting all arguments
+     - **Cause**: PowerShell removes empty strings before subprocess receives args
+     - **Solution**: Use `"None"` string instead of `""` for optional arguments
+     - **Implementation**: 
+       ```python
+       # voice_revolver_core/infrastructure/rvc_training_wrapper.py
+       latest_g = "None" if not latest_g else latest_g  # Not ""
+       latest_d = "None" if not latest_d else latest_d  # Not ""
+       ```
+     
+     **Fix 4: Missing assets/config.json**
+     - **Problem**: `FileNotFoundError: assets/config.json`
+     - **Cause**: RVC's `extract_model.py` expects model metadata file
+     - **Solution**: Create `assets/config.json` with precision and author fields
+     - **Implementation**: 
+       ```json
+       {
+         "precision": "fp32",
+         "model_author": "VoiceRevolverAI"
+       }
+       ```
+     
+     **Fix 5: Hardcoded `logs/` Directory**
+     - **Problem**: Training always used `logs/` instead of configurable temp directory
+     - **Cause**: RVC scripts expected `experiment_dir` to be just model name, appended to `logs/`
+     - **Solution**: Pass full experiment directory path, extract model_name from it
+     - **Implementation**: 
+       ```python
+       # rvc/train/train.py - Accept full path
+       experiment_dir = sys.argv[1]  # Full path: C:/.../temp/audio_training/sample/logs
+       model_name = Path(experiment_dir).parent.name  # Extract "sample"
+       
+       # voice_revolver_core/infrastructure/rvc_training_wrapper.py
+       experiment_dir = temp_dir / model_name / "logs"  # Full path, not just model name
+       ```
+  
+  7. **Temp Directory Structure**:
+     ```
+     temp/audio_training/{model_name}/
+     ├── logs/                          # Experiment directory (passed to RVC)
+     │   ├── 0_gt_wavs/                # Preprocessed 3s audio segments
+     │   ├── 1_16k_wavs/               # Resampled to 16kHz
+     │   ├── 2a_f0/                    # Extracted pitch (F0) features
+     │   ├── 2b-f0nsf/                 # F0 with noise suppression
+     │   ├── 3_feature{sr}/            # Vocal embeddings (HuBERT/ContentVec)
+     │   ├── sample_e{epoch}_s{step}.pth  # Model checkpoints (e.g., sample_e200_s400.pth)
+     │   ├── sample.index              # FAISS index for feature retrieval
+     │   └── trained/                  # Final model exports
+     └── input_audio.wav               # Copied input (generic name)
+     ```
+  
+  8. **Integration with Voice Cloning**:
+     - Exported `.zip` files can be loaded in Voice Cloning workspace
+     - RVC parameters in Voice Cloning use the trained model's index file
+     - Model quality depends on: audio length, sample rate, epochs, training data quality
+  
+  9. **Training Best Practices** (documented in UI tooltips):
+     - **Audio Length**: Minimum 15 seconds, recommended 1-5 minutes for best results
+     - **Sample Rate**: 40000 Hz balanced quality/speed, 48000 Hz for maximum quality
+     - **Epochs**: 200-300 for decent quality, 500+ for professional results
+     - **Batch Size**: Higher = faster training but requires more GPU VRAM
+     - **F0 Method**: RMVPE recommended (best pitch detection), Crepe for high quality (slower)
+  
+  10. **Error Handling**:
+      - Validates model name (no spaces, special chars, max 50 chars)
+      - Validates audio file exists and is readable
+      - Checks for existing model name conflicts
+      - GPU memory validation before training start
+      - Graceful cancellation with cleanup on user stop
+
+- **Critical Lessons from RVC Training Catastrophe**:
+  - **PyTorch distributed training is Linux-first** - Windows single-GPU needs special handling
+  - **Package assumptions != reality** - RVC expects mute files, hardcoded paths, specific args
+  - **PowerShell != Bash** - Empty strings are dropped, quoting rules differ
+  - **Always test on target platform** - What works on Linux may fail silently on Windows
+  - **Read subprocess stderr first** - Real error messages often buried in output
+  - **Temp directories should be configurable** - Never hardcode to `logs/` or similar
+
+- **Files Created**:
+  ```
+  voice_revolver_ui/features/audio_training/
+  ├── __init__.py                    # Package exports (AudioTrainingWorkspace)
+  ├── workspace.py                   # Main workspace + 4-step pipeline (650+ lines)
+  └── components/
+      ├── __init__.py               # Component exports
+      ├── input_panel.py            # Training parameters (400+ lines)
+      └── output_panel.py           # Progress + export (200+ lines)
+  
+  assets/
+  └── config.json                    # RVC model extraction metadata
+  ```
+
+- **Files Modified**:
+  - `voice_revolver_ui/main_tk.py` - Integrated audio_training workspace
+  - `voice_revolver_ui/features/menu_bar/menu_bar.py` - Added "Audio Training" (index 6)
+  - `rvc/train/train.py` - Skip distributed for Windows single-GPU, accept full experiment_dir
+  - `rvc/train/extract/extract_f0_*.py` - Support include_mutes parameter
+  - `voice_revolver_core/infrastructure/rvc_training_wrapper.py` - Fixed argument passing, paths
+  - `voice_revolver_core/infrastructure/model_manager.py` - Added RVC model export logic
+
+- **Success Metrics**:
+  - ✅ 4-step training pipeline functional (preprocess → extract → train → index)
+  - ✅ Windows single-GPU training works (no gloo errors)
+  - ✅ Training completes successfully (200 epochs in ~2 hours on RTX 4050)
+  - ✅ Model checkpoints generated correctly (.pth ~55MB, .index ~1MB)
+  - ✅ Export as .zip works (compatible with Voice Cloning)
+  - ✅ Real-time log output and progress tracking
+  - ✅ No file path errors (temp directory properly configured)
+  - ✅ User tested successfully: "done 100% thank you so much"
+
+- **Documentation Updated**:
+  - ✅ `AGENT_MEMORY.md` - Added "RVC Training on Windows Single-GPU - The Gloo Backend Catastrophe"
+  - ✅ `docs/technical-implementation-guide.md` - Added Audio Training workspace section + Challenge 5
 
 ---
 
