@@ -280,13 +280,28 @@ class InputPanel(ttk.Frame):
         rms_desc.grid(row=param_row, column=0, sticky=tk.W, padx=(15, 0), pady=(0, 5))
         param_row += 1
         
-        # Reset All button
+        # Button frame for Start Processing and Reset All buttons
+        params_button_frame = ttk.Frame(self.rvc_params_frame)
+        params_button_frame.grid(row=param_row, column=0, sticky=(tk.W, tk.E), pady=(10, 5))
+        params_button_frame.columnconfigure(0, weight=1)
+        params_button_frame.columnconfigure(1, weight=1)
+        
+        # Start Processing button (left)
+        self.process_btn = ttk.Button(
+            params_button_frame,
+            text="Start Processing",
+            command=self._on_process_clicked,
+            style='Accent.TButton'
+        )
+        self.process_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
+        
+        # Reset All button (right)
         self.reset_all_btn = ttk.Button(
-            self.rvc_params_frame,
+            params_button_frame,
             text="Reset All to Defaults",
             command=self._reset_rvc_params
         )
-        self.reset_all_btn.grid(row=param_row, column=0, pady=(10, 5))
+        self.reset_all_btn.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
         param_row += 1
         
         # Separator
@@ -321,27 +336,14 @@ class InputPanel(ttk.Frame):
         self.use_edited_check.grid(row=ref_row, column=0, sticky=tk.W, pady=(5, 0))
         ref_row += 1
         
-        # Action Buttons
-        button_frame = ttk.Frame(ref_frame)
-        button_frame.grid(row=ref_row, column=0, sticky=(tk.W, tk.E), pady=(15, 5))
-        button_frame.columnconfigure(0, weight=1)
-        button_frame.columnconfigure(1, weight=1)
-        
-        self.process_btn = ttk.Button(
-            button_frame,
-            text="Start Processing",
-            command=self._on_process_clicked,
-            style='Accent.TButton'
-        )
-        self.process_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
-        
+        # Export Button
         self.export_btn = ttk.Button(
-            button_frame,
+            ref_frame,
             text="Export",
             command=self._on_export_clicked,
             state='disabled'
         )
-        self.export_btn.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
+        self.export_btn.grid(row=ref_row, column=0, sticky=(tk.W, tk.E), pady=(15, 5))
         
         row += 1
     
