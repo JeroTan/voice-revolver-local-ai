@@ -878,7 +878,7 @@ class AudioProcessor:
         enhanced_path: Path,
         output_path: Path,
         blend_curve,
-        sr: int = 44100
+        sr: int = None
     ) -> bool:
         """
         Apply time-varying blend between original and enhanced vocals (Phase 2.7).
@@ -894,7 +894,7 @@ class AudioProcessor:
             enhanced_path: Path to enhanced vocal audio file
             output_path: Output audio file path
             blend_curve: BlendCurve object with control points (time, enhanced_percent)
-            sr: Target sample rate (default: 44100)
+            sr: Target sample rate (default: None = preserve original)
         
         Returns:
             True if successful, False otherwise
@@ -909,9 +909,12 @@ class AudioProcessor:
             
             logger.info(f"Applying blend curve ({len(blend_curve.control_points)} control points)")
             
-            # Load both audio files
+            # Load both audio files, preserving original sample rate if not specified
             original, orig_sr = librosa.load(str(original_path), sr=sr, mono=True)
-            enhanced, enh_sr = librosa.load(str(enhanced_path), sr=sr, mono=True)
+            enhanced, enh_sr = librosa.load(str(enhanced_path), sr=orig_sr, mono=True)
+            
+            # Use the original file's sample rate
+            final_sr = orig_sr
             
             # Ensure same length (pad shorter one with zeros)
             max_length = max(len(original), len(enhanced))
@@ -920,10 +923,10 @@ class AudioProcessor:
             if len(enhanced) < max_length:
                 enhanced = np.pad(enhanced, (0, max_length - len(enhanced)))
             
-            duration = len(original) / sr
+            duration = len(original) / final_sr
             
             # Create time points for each audio sample
-            time_points = np.arange(len(original)) / sr
+            time_points = np.arange(len(original)) / final_sr
             
             # Sample the blend curve at each time point
             from voice_revolver_core.domain.base import BlendCurve
@@ -951,11 +954,12 @@ class AudioProcessor:
             blend_factors = blend_percents / 100.0  # Convert to 0-1 range
             blended_audio = original * (1 - blend_factors) + enhanced * blend_factors
             
-            # Save output
+            # Save output at original sample rate
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            sf.write(str(output_path), blended_audio, sr)
+            sf.write(str(output_path), blended_audio, final_sr)
             
             logger.info(f"Blend curve applied, saved to {output_path.name}")
+            logger.info(f"  Sample rate: {final_sr}Hz, Duration: {duration:.2f}s")
             logger.info(f"  Blend range: {blend_percents.min():.1f}% to {blend_percents.max():.1f}% enhanced")
             return True
             

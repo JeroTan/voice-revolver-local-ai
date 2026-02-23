@@ -64,6 +64,9 @@ def main():
     dwav, sr = torchaudio.load(args.input)
     dwav = dwav.mean(dim=0)  # Convert to mono if stereo
     
+    # Store original sample rate for final output
+    original_sr = sr
+    
     # Move to device
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     dwav = dwav.to(device)
@@ -79,7 +82,14 @@ def main():
     # Enhance
     print(f"Enhancing with solver={args.solver}, nfe={args.nfe}, tau={args.tau}", file=sys.stderr)
     enhanced, new_sr = enhance(dwav, sr, device, nfe=args.nfe, solver=args.solver, tau=args.tau)
-    sr = new_sr
+    
+    # Resample back to original sample rate if model changed it
+    if new_sr != original_sr:
+        print(f"Resampling from {new_sr}Hz back to {original_sr}Hz", file=sys.stderr)
+        enhanced = torchaudio.functional.resample(enhanced, orig_freq=new_sr, new_freq=original_sr)
+        sr = original_sr
+    else:
+        sr = new_sr
     
     # Save output
     print(f"Saving enhanced audio: {args.output}", file=sys.stderr)

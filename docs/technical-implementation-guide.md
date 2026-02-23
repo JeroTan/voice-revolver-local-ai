@@ -129,6 +129,7 @@ Voice Revolver AI features a **modular workspace system** with four distinct wor
 | **Audio Separation** | Isolate and edit individual audio stems | Demucs, AudioProcessor | ✅ Complete |
 | **Text-to-Speech** | Generate speech from text | ChatterBox TTS (+ Turbo) | ✅ Complete |
 | **Voice Cloning** | Clone voice using audio samples or RVC models | ChatterBox VC, RVC | ✅ Complete |
+| **Voice Enhancement** | Enhance audio quality with AI denoising | Resemble Enhance, Blend Mode | ✅ Complete |
 
 ### Common Workspace Pattern
 
@@ -538,6 +539,165 @@ def progress_cb(percent, message=None):
         message = f"Processing... {int(percent * 100)}%"
     # RVC: Sends both percent and message
     self.root.after(0, self._update_progress, percent * 100, message)
+```
+
+---
+
+### 5. Voice Enhancement Workspace
+
+**Purpose**: Enhance audio quality using Resemble Enhance AI with blend mode for A/B comparison
+
+**Key Features**:
+- AI-powered denoising and enhancement via Resemble Enhance
+- 4 enhancement parameters (NFE, Temperature, Solver, Denoise First)
+- Blend mode: Real-time A/B comparison between original and enhanced
+- Curve editing: Blend → Pitch → Volume → Reverb (applied in correct order)
+- Non-compounding edits (always starts from pristine enhanced.wav)
+- Sample rate preservation (enhanced matches original)
+
+**Component Structure**:
+```
+voice_revolver_ui/features/voice_enhancement/
+├── __init__.py                    # Package exports
+├── workspace.py                   # Main workspace orchestration (594 lines)
+└── components/
+    ├── __init__.py               # Component exports
+    ├── input_panel.py            # Enhancement parameters + controls (311 lines)
+    └── output_panel.py           # Spectrum editor wrapper (92 lines)
+```
+
+**Enhancement Parameters** (with detailed descriptions):
+```python
+# Quality (NFE): Number of Function Evaluations
+LabeledSlider(
+    label="Quality (NFE):",
+    from_=1,
+    to=128,
+    value=64,
+    description="1=fastest low quality, 128=slowest highest quality"
+)
+
+# Temperature: Prior temperature
+LabeledSlider(
+    label="Temperature:",
+    from_=0.01,
+    to=1.0,
+    value=0.33,
+    description="0.01=conservative/subtle, 1.0=aggressive/may add artifacts"
+)
+
+# Solver: Numerical solver method
+ttk.Combobox(
+    values=["euler", "midpoint", "rk4"],
+    description="euler=fast, midpoint=balanced, rk4=best quality"
+)
+
+# Denoise First: Apply denoising before enhancement
+ttk.Checkbutton(
+    text="Denoise First",
+    description="Pre-process with noise reduction"
+)
+```
+
+**Blend Mode Implementation**:
+```python
+# Load both original and enhanced into spectrum editor
+self.output_panel.load_audio(
+    audio_path=self.original_audio_path,      # Original input
+    enhanced_path=self.enhanced_audio_path    # Resemble Enhance output
+)
+
+# This enables blend mode with blend curve slider
+# Blend curve: 0% = 100% original, 100% = 100% enhanced
+```
+
+**Curve Application Order** (CRITICAL):
+```python
+def _apply_curves_worker(self):
+    current_audio = self.enhanced_audio_path  # Start from pristine enhanced
+    
+    # STEP 1: Blend curve FIRST (if edited)
+    # Mixes original vs enhanced based on curve
+    if blend_curve.has_edits():
+        current_audio = apply_blend_curve(
+            original_path=self.original_audio_path,
+            enhanced_path=self.enhanced_audio_path,
+            blend_curve=blend_curve
+        )
+    
+    # STEP 2-4: Apply pitch, volume, reverb to blended/enhanced audio
+    if pitch_curve.has_edits():
+        current_audio = apply_pitch_curve(current_audio, pitch_curve)
+    
+    if volume_curve.has_edits():
+        current_audio = apply_volume_curve(current_audio, volume_curve)
+    
+    if reverb_curve.has_edits():
+        current_audio = apply_reverb_curve(current_audio, reverb_curve)
+    
+    # Save final result (overwrites enhanced_edited.wav)
+    shutil.copy(current_audio, self.edited_audio_path)
+```
+
+**Sample Rate Preservation Fix**:
+```python
+# In enhance_single_file.py (venv-enhance subprocess)
+# Store original sample rate before enhancement
+original_sr = sr
+
+# After enhancement
+enhanced, new_sr = enhance(dwav, sr, device, ...)
+
+# Resample back to original if model changed it
+if new_sr != original_sr:
+    enhanced = torchaudio.functional.resample(
+        enhanced,
+        orig_freq=new_sr,
+        new_freq=original_sr
+    )
+    sr = original_sr
+
+# This prevents visualization cut-off in blend mode
+```
+
+**Blend Mode Persistence**:
+```python
+def _apply_curves_complete(self):
+    # Use reload_audio_only() instead of load_audio()
+    # This preserves all curves (including blend curve) and keeps blend mode active
+    self.output_panel.reload_audio_only(self.edited_audio_path)
+    
+    # Blend mode shows: edited (0%) ↔ pristine enhanced (100%)
+    # User can continue adjusting blend after applying changes
+```
+
+**Temp File Workflow**:
+```
+C:\Users\{user}\AppData\Local\VoiceRevolverAI\temp\voice_enhancement\
+├── original.wav              # Original input audio
+├── enhanced.wav              # Resemble Enhance output (IMMUTABLE)
+├── enhanced_edited.wav       # Latest curve-edited version (OVERWRITES)
+├── temp_blend.wav           # Intermediate: blend applied
+├── temp_pitch.wav           # Intermediate: pitch applied
+├── temp_volume.wav          # Intermediate: volume applied
+└── temp_reverb.wav          # Intermediate: reverb applied
+```
+
+**Export Logic**:
+```python
+def _on_export_clicked(self):
+    use_edited = self.input_panel.get_use_edited()
+    
+    if use_edited and self.edited_audio_path.exists():
+        source_path = self.edited_audio_path  # Export with curve edits
+    elif use_edited:
+        messagebox.showwarning(
+            "No Edited Version",
+            "Apply curve changes first, or uncheck 'Use edited audio'."
+        )
+        return
+    else:
+        source_path = self.enhanced_audio_path  # Export pristine enhanced
 ```
 
 ---
@@ -1962,6 +2122,7 @@ Invoke-WebRequest `
 | 1.0.1 | Feb 2026 | Migrated from rvc-python to Applio (Python 3.11 fix) |
 | 1.1.0 | Feb 20, 2026 | Added gender-aware voice conversion with F0-based pitch adaptation |
 | 1.2.0 | Feb 23, 2026 | **Voice Cloning Workspace**: Dual reference modes (Audio File/RVC Model), RVC parameter controls with descriptions, non-compounding curve editing, export checkbox, dynamic file type filtering |
+| 1.3.0 | Feb 23, 2026 | **Voice Enhancement Workspace**: Resemble Enhance AI integration, blend mode A/B comparison (original ↔ enhanced), curve editing support (blend first → pitch → volume → reverb), sample rate preservation, "Use edited audio" checkbox |
 
 ---
 

@@ -272,6 +272,7 @@ voice_revolver_ui/
     ├── audio_separation/      # ✅ Stem separation workspace (COMPLETED)
     ├── text_to_speech/        # ✅ TTS workspace (COMPLETED)
     ├── voice_cloning/         # ✅ Voice cloning workspace (COMPLETED - 2026-02-23)
+    ├── voice_enhancement/     # ✅ Voice enhancement workspace (COMPLETED - 2026-02-23)
     └── voice_training/        # Future: Voice training workspace
 ```
 
@@ -434,7 +435,7 @@ def _switch_workspace(self, workspace_id):
   - Extract processing panel (curve editing, processing controls)
   - Extract preview panel (audio playback, export controls)
   
-- **Phase 5:** Implement additional workspaces ✅ PARTIALLY COMPLETED (Feb 22, 2026)
+- **Phase 5:** Implement additional workspaces ✅ FULLY COMPLETED (Feb 23, 2026)
   - ✅ Audio Separation workspace - COMPLETED
     - Created `features/audio_separation/` directory structure
     - Implemented `AudioSeparationWorkspace` with InputPanel, TrackListPanel, TrackEditor components
@@ -456,6 +457,13 @@ def _switch_workspace(self, workspace_id):
     - Export checkbox: "Use edited version"
     - AudioProcessor integration for curve application
     - Progress callback compatibility (ChatterBox single-arg, RVC dual-arg)
+  - ✅ Voice Enhancement workspace - COMPLETED (2026-02-23)
+    - Resemble Enhance integration (4 parameters: NFE, temperature, solver, denoise first)
+    - Blend mode: A/B comparison between original and enhanced
+    - Curve editing: Blend → Pitch → Volume → Reverb (correct order)
+    - Non-compounding edits (always starts from pristine enhanced.wav)
+    - Sample rate preservation (enhanced matches original)
+    - Export with "Use edited audio" checkbox
   - Voice Training workspace (Future)
 
 ---
@@ -498,6 +506,7 @@ def _switch_workspace(self, workspace_id):
   ├── audio_separation/       # ✅ Stem separation workspace
   ├── text_to_speech/         # ✅ TTS workspace
   ├── voice_cloning/          # ✅ Voice cloning workspace (COMPLETED 2026-02-23)
+  ├── voice_enhancement/      # ✅ Voice enhancement workspace (COMPLETED 2026-02-23)
   └── voice_training/         # Future workspace (ready)
   ```
 - **Test Organization:**
@@ -1869,6 +1878,117 @@ voice_revolver_core/
   - ✅ `docs/voice-revolver-ai-prd.md` - Added Product Architecture: Workspace-Based Design
   - ✅ `docs/voice-revolver-ai-prd.md` - Added Phase 2.8: Voice Cloning Workspace
   - ✅ `docs/voice-revolver-ai-prd.md` - Updated version to 1.2
+
+---
+
+### 2026-02-23 | Voice Enhancement Workspace Implementation ✅ COMPLETED
+- **Topic:** Implemented standalone Voice Enhancement workspace with Resemble Enhance AI for audio denoising and enhancement
+- **Motivation:** Provide dedicated workspace for enhancing vocals using Resemble Enhance with blend mode support
+- **Implementation:**
+  1. **Workspace Structure** (`voice_revolver_ui/features/voice_enhancement/`):
+     - `workspace.py` (594 lines): Main workspace orchestration
+     - `components/input_panel.py` (311 lines): Left panel controls
+     - `components/output_panel.py` (92 lines): Right panel spectrum editor wrapper
+  
+  2. **Resemble Enhance Integration**:
+     - 4 enhancement parameters with detailed min/max descriptions:
+       - **Quality (NFE)**: 1-128 ("1=fastest low quality, 128=slowest highest quality")
+       - **Temperature**: 0.01-1.0 ("0.01=conservative/subtle, 1.0=aggressive/may add artifacts")
+       - **Solver**: euler/midpoint/rk4 ("euler=fast, midpoint=balanced, rk4=best quality")
+       - **Denoise First**: Checkbox with description
+     - Subprocess execution via `venv-enhance` (Python 3.11)
+     - Sample rate preservation fix (enhanced audio matches original sample rate)
+  
+  3. **Blend Mode Implementation**:
+     - Loads both original.wav + enhanced.wav into spectrum editor
+     - Blend curve: Adjust mix between original (0%) ↔ enhanced (100%)
+     - Real-time A/B comparison visualization
+     - Apply Changes callback handles blend curve application
+  
+  4. **Curve Application Pipeline** (Correct Order):
+     - **Step 1**: Blend curve (if edited) - mixes original vs enhanced
+     - **Step 2**: Pitch curve - applied to blended/enhanced audio
+     - **Step 3**: Volume curve - applied to pitch-modified audio
+     - **Step 4**: Reverb curve - applied to volume-modified audio
+     - Result saved as `enhanced_edited.wav`
+  
+  5. **Non-Compounding Edits**:
+     - `enhanced.wav`: Original Resemble Enhance output (IMMUTABLE)
+     - `enhanced_edited.wav`: Latest curve-edited version (OVERWRITES each apply)
+     - Always starts from pristine `enhanced.wav` (prevents compounding)
+     - Blend mode stays active after Apply Changes (uses `reload_audio_only()`)
+  
+  6. **Export Controls**:
+     - Checkbox: "Use edited audio (with curve edits applied)"
+     - Format selector: WAV, MP3, FLAC, OGG
+     - Validates edited version exists before allowing export
+  
+  7. **Critical Fixes Applied**:
+     - ✅ Sample rate mismatch → Resample enhanced back to original sample rate
+     - ✅ Blend curve order → Apply blend FIRST, then pitch/volume/reverb
+     - ✅ Apply Changes callback → Passes to spectrum_editor.apply_changes_callback
+     - ✅ Blend mode persistence → Uses reload_audio_only() to preserve blend mode
+     - ✅ LabeledSlider.set_enabled() bug → Use configure_slider/configure_entry/reset_btn.config
+     - ✅ Redundant Apply Changes button → Removed from OutputPanel (spectrum editor has built-in)
+  
+  8. **SpectrumEditor Integration** (Follows vocal_changer pattern):
+     - Callback: `apply_changes_callback=self._apply_blend_curve`
+     - Load: `load_audio(original_path, enhanced_path=enhanced_path)`
+     - Reload: `reload_audio_only(edited_path)` (preserves curves + blend mode)
+     - Direct attribute access: `pitch_curve`, `reverb_curve`, `volume_curve`, `blend_curve`
+  
+  9. **Temp File Workflow**:
+     ```
+     temp/voice_enhancement/
+     ├── original.wav          # Original input audio
+     ├── enhanced.wav          # Resemble Enhance output (IMMUTABLE)
+     ├── enhanced_edited.wav   # Latest curve-edited version (OVERWRITES)
+     ├── temp_blend.wav        # Intermediate: blend applied
+     ├── temp_pitch.wav        # Intermediate: pitch applied
+     ├── temp_volume.wav       # Intermediate: volume applied
+     └── temp_reverb.wav       # Intermediate: reverb applied
+     ```
+  
+  10. **Integration**:
+      - Added to menu bar: "Voice Enhancement" menu item (index 4, enabled)
+      - Workspace switching: `_switch_workspace("voice_enhancement")`
+      - Moved "Voice Training" to index 5
+
+- **Files Modified/Created**:
+  ```
+  voice_revolver_ui/features/voice_enhancement/
+  ├── __init__.py                    # Package exports (VoiceEnhancementWorkspace)
+  ├── workspace.py                   # Main workspace frame (594 lines)
+  └── components/
+      ├── __init__.py               # Component exports
+      ├── input_panel.py            # Left panel controls (311 lines)
+      └── output_panel.py           # Right panel spectrum editor (92 lines)
+  
+  voice_revolver_core/infrastructure/
+  ├── enhance_single_file.py         # Resample fix (preserve original sample rate)
+  └── audio_processor.py             # apply_blend_curve() sample rate fix (sr=None)
+  
+  voice_revolver_ui/
+  ├── main_tk.py                     # Integrated voice_enhancement workspace
+  └── features/menu_bar/menu_bar.py  # Added "Voice Enhancement" menu item
+  ```
+
+- **Success Metrics**:
+  - ✅ Resemble Enhance parameters work (NFE, temperature, solver, denoise)
+  - ✅ Blend mode visualization correct (no horizontal cut-off)
+  - ✅ Apply Changes handles ALL curve types (blend, pitch, reverb, volume)
+  - ✅ Blend curve applied FIRST, then other effects
+  - ✅ Blend mode stays active after Apply Changes
+  - ✅ Sample rate preserved across all operations
+  - ✅ "Use edited audio" checkbox respects state in export
+  - ✅ User tested successfully: "Good job this workspace is done"
+
+- **Key Learnings**:
+  - **Listen to vocal_changer implementation** - It's the reference pattern
+  - **reload_audio_only() vs load_audio()**: Use reload_audio_only() to preserve curves + blend mode
+  - **Blend curve goes FIRST**: Blend → Pitch → Volume → Reverb (not the other way around)
+  - **Sample rate preservation**: Enhanced must match original to prevent visualization issues
+  - **Blend mode is the whole point**: Never disable it in this workspace
 
 ---
 
