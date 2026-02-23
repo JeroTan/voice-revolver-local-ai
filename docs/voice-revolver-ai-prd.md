@@ -1,11 +1,12 @@
 # Product Requirements Document: Voice Revolver AI
 
-**Version**: 1.1 (Dual-Reference Update)  
-**Date**: 2026-02-20  
+**Version**: 1.2 (Workspace Expansion Update)  
+**Date**: 2026-02-23  
 **Author**: Sarah (Product Owner)  
 **Quality Score**: 100/100
 
 **Version History:**
+- **v1.2** (2026-02-23): Added Voice Cloning workspace with dual reference modes, RVC parameter controls, curve editing
 - **v1.1** (2026-02-20): Added dual-reference voice conversion (Audio + Model modes), Applio RVC integration
 - **v1.0** (2026-02-18): Initial release with ChatterBox VC
 
@@ -23,6 +24,162 @@ All processing is done locally on the user's machine—no cloud dependency requi
 The core business logic is built using Domain-Driven Design (DDD) architecture, with a dual virtual environment strategy to support both conversion engines simultaneously while avoiding dependency conflicts.
 
 **Key Innovation**: First desktop app to offer BOTH audio-based and model-based voice conversion in a single unified interface.
+
+---
+
+## Product Architecture: Workspace-Based Design
+
+Voice Revolver AI features a **modular workspace system** with four distinct workspaces, each focused on specific audio processing tasks:
+
+### Workspace Overview
+
+| Workspace | Purpose | Key Features | Status |
+|-----------|---------|--------------|--------|
+| **Vocal Changer** | End-to-end voice replacement in songs | Dual reference modes (Audio/RVC), stem mixing, curve editing | ✅ Complete |
+| **Audio Separation** | Standalone stem isolation and editing | 4-track editing (vocals, drums, bass, other), per-track curves | ✅ Complete |
+| **Text-to-Speech** | Generate speech from text | 23 languages (MTL), Turbo mode (English), curve editing | ✅ Complete |
+| **Voice Cloning** | Voice conversion with audio/model | ChatterBox VC + RVC, 6 RVC parameters, export controls | ✅ Complete |
+
+### Workspace 1: Vocal Changer (Original)
+
+**Purpose**: Complete voice replacement pipeline for songs/videos
+
+**User Flow**:
+1. Load original audio/video file
+2. Select reference (audio sample or RVC model)
+3. Configure settings (gender detection, enhancement options)
+4. Process → Demucs separation → Voice conversion → Audio enhancement
+5. Edit curves (pitch, reverb, volume, blend, noise reduction)
+6. Export final mix
+
+**Key Features**:
+- Dual reference modes (Audio/RVC)
+- Gender-aware pitch adaptation (F0-based detection)
+- Resemble Enhance integration (vocal clarity)
+- 5-curve spectrum editor (pitch, reverb, volume, blend, noise)
+- Per-stem volume control
+- Video support (audio track replacement)
+
+**UI Layout**: Vertical single panel with integrated controls
+
+---
+
+### Workspace 2: Audio Separation
+
+**Purpose**: Isolate and edit individual audio stems
+
+**User Flow**:
+1. Load audio file
+2. Select Demucs model (htdemucs_ft)
+3. Optional: Enable vocal enhancement
+4. Separate → 4 stems extracted
+5. Edit each stem independently (pitch, reverb, volume curves)
+6. Apply Changes → Preview edits
+7. Export individual stems or mixed output
+
+**Key Features**:
+- 4 independent track editors (vocals, drums, bass, other)
+- Per-track SpectrumEditor (scrollable container)
+- Non-compounding curve edits (always process from original stem)
+- Individual or batch export
+- Preview with per-track volume controls
+
+**UI Layout**: Left panel (controls) + Right panel (scrollable track list)
+
+---
+
+### Workspace 3: Text-to-Speech
+
+**Purpose**: Generate speech from text with AI
+
+**User Flow**:
+1. Enter text (multiline support)
+2. Select language (23 languages via MTL model)
+3. Optional: Enable Turbo mode (English only) + Quality Boost
+4. Generate speech
+5. Edit curves (pitch, reverb, volume)
+6. Apply Changes → Preview edits
+7. Export as WAV/MP3/FLAC
+
+**Key Features**:
+- **Dual TTS Models**:
+  - **MTL Model**: 23 languages (multilingual support)
+  - **Turbo Model**: English only, special tokens ([laugh], [sigh]), better prosody
+- **Turbo Quality Boost**: Enhanced emotion and pause placement
+- **HuggingFace Token**: Stored in `~/.voice_revolver/config.json` (required for Turbo)
+- **Curve Editing**: Post-processing with pitch/reverb/volume curves
+- **Export Checkbox**: "Use edited version" (exports curve-edited audio vs. original TTS)
+
+**Special Tokens** (Turbo mode):
+- `[laugh]` - Generates laughter
+- `[sigh]` - Generates sighing
+
+**UI Layout**: Left panel (text input + controls) + Right panel (spectrum editor)
+
+---
+
+### Workspace 4: Voice Cloning **(NEW in v1.2)**
+
+**Purpose**: Standalone voice cloning with dual reference modes
+
+**User Flow**:
+1. Load original audio (voice to be converted)
+2. Select reference mode:
+   - **Audio File**: ChatterBox VC (zero-shot, 5-30s sample)
+   - **RVC Model**: RVC wrapper (trained .zip model)
+3. If RVC: Configure 6 parameters (F0 method, pitch shift, index rate, protection, filter radius, RMS mix)
+4. Process → Voice conversion
+5. Edit curves (pitch, reverb, volume)
+6. Apply Changes → Preview edits
+7. Export as WAV/MP3/FLAC/OGG (checkbox: "Use edited version")
+
+**Key Features**:
+- **Dual Reference Modes**:
+  - **Audio File Mode**: ChatterBox VC (fast, zero-shot)
+  - **RVC Model Mode**: RVC wrapper (high-quality, trained models)
+- **Dynamic File Type Filtering**: File selector adapts based on reference mode
+  - Audio mode: `.wav`, `.mp3`, `.flac`
+  - RVC mode: `.zip` files (RVC model archives)
+- **RVC Parameter Controls** (6 sliders with descriptions):
+  1. **F0 Method**: Pitch extraction algorithm (rmvpe/harvest/crepe/pm)
+  2. **Pitch Shift**: Semitone adjustment (-12 to +12)
+  3. **Index Rate**: Feature retrieval strength (0.0-1.0, default: 0.75)
+  4. **Protection**: Consonant protection (0.0-0.5, default: 0.33)
+  5. **Filter Radius**: Pitch smoothing (0-7, default: 3)
+  6. **RMS Mix Rate**: Volume envelope mix (0.0-1.0, default: 0.25)
+- **Non-Compounding Curve Edits**: All edits start from original processed file
+- **File Lock Prevention**: Releases audio handles before processing, cleans old temp files
+- **Export Checkbox**: "Use edited version" (exports curve-edited vs. original clone)
+- **Progress Callback Compatibility**: Handles both ChatterBox VC (single-arg) and RVC (dual-arg) callbacks
+
+**RVC Parameter Help Text**: Each parameter includes descriptive text explaining purpose and recommended values
+
+**Temp File Workflow**:
+```
+C:\Users\{user}\AppData\Local\VoiceRevolverAI\temp\voice_cloning\
+├── processed.wav          # Original voice clone output (IMMUTABLE)
+├── processed_edited.wav   # Latest curve-edited version (OVERWRITES)
+├── temp_pitch.wav        # Intermediate: pitch applied
+├── temp_volume.wav       # Intermediate: volume applied
+└── temp_reverb.wav       # Intermediate: reverb applied
+```
+
+**Technical Highlights**:
+- Uses `AudioProcessor` (not `VoiceTransformer`) for curve application
+- Direct attribute access for curves: `spectrum_editor.pitch_curve`
+- Method calls: `load_vocals()`, `reload_audio_only()`, `release_audio_file()`
+- Temp file cleanup before processing to prevent Windows file locks
+
+**UI Layout**: Left panel (original audio, reference selector, RVC params, export) + Right panel (spectrum editor wrapper)
+
+**Critical Fixes Applied**:
+- ✅ Emoji encoding errors (Windows console) - Replaced with ASCII
+- ✅ Progress callback signature mismatch - Flexible callback with default message
+- ✅ Method name errors - Corrected to `load_vocals()` with proper parameters
+- ✅ Curve getter errors - Direct attribute access instead of getter methods
+- ✅ File locking issues - Temp file cleanup before processing
+- ✅ Reference mode filtering - Dynamic file type updates via `set_file_types()`
+- ✅ VoiceTransformer missing method - Replaced with AudioProcessor
 
 ---
 
@@ -432,6 +589,59 @@ The core business logic is built using Domain-Driven Design (DDD) architecture, 
 5. Start Processing → Full voice conversion pipeline
 6. Preview 6 tracks with independent playback
 7. Export final result
+
+**Phase 2.7: Resemble Enhance Integration** (Completed)
+- ✅ Vocal clarity enhancement (Resemble Enhance)
+- ✅ Optional phase after voice conversion
+- ✅ Separate venv-enhance environment (dependency isolation)
+- ✅ GPU acceleration support
+- ✅ Configurable enhancement strength
+
+**Phase 2.8: Voice Cloning Workspace** (Completed - 2026-02-23)
+- ✅ **Standalone Voice Cloning Workspace**: Dedicated UI workspace for voice conversion tasks
+- ✅ **Dual Reference Mode UI**:
+  - Radio buttons: "Audio File" / "RVC Model"
+  - Dynamic file type filtering (audio files vs. .zip models)
+  - RVC parameters panel (shows/hides based on mode)
+- ✅ **RVC Parameter Controls**: 6 sliders with help text descriptions
+  - F0 Method dropdown (rmvpe, harvest, crepe, pm)
+  - Pitch Shift slider (-12 to +12 semitones)
+  - Index Rate slider (0.0-1.0, default: 0.75)
+  - Protection slider (0.0-0.5, default: 0.33)
+  - Filter Radius slider (0-7, default: 3)
+  - RMS Mix Rate slider (0.0-1.0, default: 0.25)
+  - "Reset All to Defaults" button
+- ✅ **Spectrum Editor Integration**: Output panel wraps SpectrumEditor component
+- ✅ **Non-Compounding Curve Editing**: Always process from original `processed.wav`
+- ✅ **File Lock Prevention**: Release audio + clean temp files before processing
+- ✅ **Export Controls**:
+  - Checkbox: "Use edited version" (exports curve-edited vs. original)
+  - Format selector: WAV, MP3, FLAC, OGG
+  - Browse button for output directory
+- ✅ **Progress Tracking**: Compatible with both ChatterBox VC and RVC callbacks
+- ✅ **Dynamic FileSelector**: `set_file_types()` method for runtime filter updates
+- ✅ **Error Handling**: Windows encoding fixes (Unicode → ASCII logging)
+- ✅ **AudioProcessor Integration**: Apply curves individually (pitch → volume → reverb)
+- ✅ **Menu Integration**: "Voice Cloning" menu item enabled in menu bar
+- ✅ **Workspace Switching**: Integrated into main window's workspace manager
+
+**Voice Cloning Workspace Components**:
+```
+voice_revolver_ui/features/voice_cloning/
+├── __init__.py                    # Package exports (VoiceCloningWorkspace)
+├── workspace.py                   # Main workspace frame (487 lines)
+└── components/
+    ├── __init__.py               # Component exports
+    ├── input_panel.py            # Left panel controls (503 lines)
+    └── output_panel.py           # Right panel spectrum editor (114 lines)
+```
+
+**Key Technical Patterns**:
+- **Temp File Workflow**: `processed.wav` (immutable) → `processed_edited.wav` (overwrites)
+- **Curve Application**: Sequential processing (pitch → volume → reverb)
+- **File Selector**: Dynamic filtering via `on_reference_mode_changed()`
+- **Spectrum Editor**: Direct attribute access (`pitch_curve`, `reverb_curve`, `volume_curve`)
+- **Method Calls**: `load_vocals()`, `reload_audio_only()`, `release_audio_file()`
 
 ### Phase 3: Future Enhancements (Planned)
 - API layer for cloud deployment

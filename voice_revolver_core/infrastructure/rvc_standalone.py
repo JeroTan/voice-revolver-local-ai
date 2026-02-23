@@ -23,11 +23,11 @@ def run_rvc_inference(
     output_audio, 
     f0_method="rmvpe", 
     f0_up_key=0,
-     index_rate=0.5,      # DEFAULT: 0.75 (Balanced timbre - decrease to 0.5-0.6 for more natural, increase to 0.9 for more precise)
-    filter_radius=2,      # DEFAULT: 3 (Natural pitch - decrease to 2 for more vibrato, increase to 5-7 for smoother/robotic)
+     index_rate=0.90,      # DEFAULT: 0.75 (Balanced timbre - decrease to 0.5-0.6 for more natural, increase to 0.9 for more precise)
+    filter_radius=7,      # DEFAULT: 3 (Natural pitch - decrease to 2 for more vibrato, increase to 5-7 for smoother/robotic)
     resample_sr=0,        # DEFAULT: 0 (Auto from model - set to 40000/48000 for custom sample rate)
-    rms_mix_rate=0.15,    # DEFAULT: 0.25 (Slight dynamics preservation - decrease to 0.15 for more expression, increase to 0.5 for flatter)
-    protect=0.2          # DEFAULT: 0.33 (Balanced consonants - decrease to 0.2 for smoother, increase to 0.4 for crisper)
+    rms_mix_rate=0.5,    # DEFAULT: 0.25 (Slight dynamics preservation - decrease to 0.15 for more expression, increase to 0.5 for flatter)
+    protect=0.4          # DEFAULT: 0.33 (Balanced consonants - decrease to 0.2 for smoother, increase to 0.4 for crisper)
 ):
     """
     Perform voice conversion using Applio's RVC implementation.

@@ -117,7 +117,765 @@ pillow==12.0.0  # Image loading for UI assets
 
 ---
 
+## Workspace Architecture
+
+Voice Revolver AI features a **modular workspace system** with four distinct workspaces, each focused on specific audio processing tasks. All workspaces follow a consistent architectural pattern for maintainability and code reuse.
+
+### Workspace Overview
+
+| Workspace | Purpose | Key Technologies | Status |
+|-----------|---------|------------------|--------|
+| **Vocal Changer** | Replace vocals with voice conversion | ChatterBox VC, RVC, Demucs | ✅ Complete |
+| **Audio Separation** | Isolate and edit individual audio stems | Demucs, AudioProcessor | ✅ Complete |
+| **Text-to-Speech** | Generate speech from text | ChatterBox TTS (+ Turbo) | ✅ Complete |
+| **Voice Cloning** | Clone voice using audio samples or RVC models | ChatterBox VC, RVC | ✅ Complete |
+
+### Common Workspace Pattern
+
+All workspaces follow this architectural pattern:
+
+```
+voice_revolver_ui/features/{workspace_name}/
+├── __init__.py                    # Package exports
+├── workspace.py                   # Main workspace frame
+└── components/
+    ├── __init__.py               # Component exports  
+    ├── input_panel.py            # Left panel - controls & parameters
+    └── output_panel.py           # Right panel - results & visualization
+```
+
+**Shared UI Components** (reusable across workspaces):
+```
+voice_revolver_ui/components/
+├── file_selector.py              # File/folder picker with browse button
+├── labeled_slider.py             # Slider with label, value entry, reset
+└── spectrum_editor.py            # Audio visualization with curve editing
+```
+
+### 1. Vocal Changer Workspace
+
+**Purpose**: End-to-end voice replacement in audio/video files
+
+**Architecture**:
+```python
+voice_revolver_ui/
+├── main_tk.py                     # Main window with Vocal Changer frame
+└── features/
+    └── vocal_changer/
+        └── spectrum_editor.py     # Spectrogram display + curve editing
+```
+
+**Processing Pipeline**:
+1. **Phase 1**: Audio/Video extraction → Demucs separation (vocals, drums, bass, other)
+2. **Phase 2**: Voice conversion (ChatterBox VC or RVC model)
+3. **Phase 2.5**: Gender alignment (optional F0-based pitch correction)
+4. **Phase 2.7**: Resemble Enhance (optional vocal clarity enhancement)
+5. **Phase 3**: Spectrum editing (pitch, reverb, volume, blend curves)
+6. **Phase 4**: Mix & export (recombine stems)
+
+**Key Features**:
+- Dual voice conversion modes (audio reference vs. RVC model)
+- Real-time audio preview with timeline scrubbing
+- Per-stem volume control
+- Curve-based audio editing (non-destructive)
+- Video support (preserves video stream, replaces audio)
+
+**Technical Highlights**:
+```python
+# Spectrum Editor with curve editing
+spectrum_editor = SpectrumEditor(parent, enable_instrumental_mode=True)
+
+# Curves support:
+- Pitch Curve: Semitone adjustments over time
+- Reverb Curve: Reverb wet/dry mix over time
+- Volume Curve: dB adjustments over time
+- Blend Curve: Original/converted mix ratio
+- Instrumental Volume: Background music level
+- Noise Curve: Noise reduction strength
+```
+
+**File Locking Strategy**:
+- Release audio handles before overwriting files
+- Use `pygame.mixer.music.unload()` to free file locks
+- Temp file cleanup with retry logic (Windows file lock issues)
+
+---
+
+### 2. Audio Separation Workspace
+
+**Purpose**: Standalone stem separation with individual track editing
+
+**File Structure**:
+```
+voice_revolver_ui/features/audio_separation/
+├── __init__.py
+├── workspace.py                   # Main workspace orchestration
+└── components/
+    ├── __init__.py
+    ├── input_panel.py            # File selection, model config, start button
+    ├── track_list_panel.py       # Scrollable container for track editors
+    └── track_editor.py           # Individual track (vocals, drums, bass, other)
+```
+
+**Processing Pipeline**:
+1. Select audio file + separation model (Demucs)
+2. Optional: Enable vocal enhancement (Resemble Enhance)
+3. Separate into 4 stems
+4. Edit each stem individually with curve controls
+5. Export individual stems or mixed output
+
+**Key Features**:
+- **Per-track editing**: Each stem gets its own SpectrumEditor
+- **Scrollable track list**: Handles 4+ stems without overflow
+- **Curve preservation**: Apply Changes reloads audio but preserves curve edits
+- **Non-compounding edits**: Always process from original stem, not previous edit
+
+**Track Editor Pattern**:
+```python
+class TrackEditor(ttk.Frame):
+    def __init__(self, parent, track_name, audio_path):
+        self.track_name = track_name         # "vocals", "drums", etc.
+        self.audio_path = audio_path         # Original separated stem (immutable)
+        self.edited_path = None              # Latest edited version
+        
+        # Spectrum editor for curve editing
+        self.spectrum_editor = SpectrumEditor(self)
+        
+    def _apply_curves_worker(self, curves):
+        """Apply curves sequentially: pitch → volume → reverb"""
+        current_audio = self.audio_path  # Always start from original!
+        
+        if curves['pitch'].has_edits():
+            current_audio = apply_pitch_curve(current_audio, ...)
+        
+        if curves['volume'].has_edits():
+            current_audio = apply_volume_curve(current_audio, ...)
+        
+        if curves['reverb'].has_edits():
+            current_audio = apply_reverb_curve(current_audio, ...)
+        
+        self.edited_path = current_audio
+```
+
+**Temp File Management**:
+```
+C:\Users\{user}\AppData\Local\VoiceRevolverAI\temp\audio_separation\
+├── separation/                    # Demucs output stems
+│   ├── vocals.wav
+│   ├── drums.wav
+│   ├── bass.wav
+│   └── other.wav
+└── preview_{track_name}/          # Individual track edits
+    ├── {track}_pitch.wav
+    ├── {track}_volume.wav
+    ├── {track}_reverb.wav
+    └── {track}_preview.wav        # Final edited version
+```
+
+**Critical Pattern**: Non-Compounding Edits
+```python
+# ❌ BAD: Editing the edited version causes quality loss
+def apply_changes_bad(self):
+    if self.edited_path:
+        input_audio = self.edited_path  # Editing an edit!
+    else:
+        input_audio = self.audio_path
+    
+    apply_effects(input_audio, ...)  # ❌ Compounds artifacts
+
+# ✅ GOOD: Always start from original
+def apply_changes_good(self):
+    input_audio = self.audio_path  # Always use original stem
+    apply_effects(input_audio, ...)  # ✅ Fresh processing each time
+```
+
+---
+
+### 3. Text-to-Speech Workspace
+
+**Purpose**: Generate speech from text using ChatterBox TTS
+
+**File Structure**:
+```
+voice_revolver_ui/features/text_to_speech/
+├── __init__.py
+├── workspace.py
+└── components/
+    ├── __init__.py
+    ├── input_panel.py            # Text input, language, Turbo mode, parameters
+    └── output_panel.py           # Spectrum editor + export controls
+```
+
+**Processing Pipeline**:
+1. Enter text (supports multiline)
+2. Select language (23 languages via MTL model)
+3. Optional: Enable Turbo mode (English only, special tokens)
+4. Optional: Enable Turbo Quality Boost (better prosody)
+5. Generate speech → load into spectrum editor
+6. Apply curve edits (pitch, reverb, volume)
+7. Export as WAV/MP3/FLAC
+
+**Key Features**:
+
+**Dual TTS Models**:
+```python
+class ChatterBoxTTSWrapper:
+    def load_model(self, model_type="mtl", hf_token=None):
+        if model_type == "turbo":
+            # Turbo model (English only, special tokens)
+            from chatterbox.tts_turbo import ChatterboxTurboTTS
+            os.environ['HF_TOKEN'] = hf_token  # Required for Turbo
+            self._model = ChatterboxTurboTTS.from_pretrained(device=device)
+        else:
+            # MTL model (23 languages)
+            from chatterbox.tts import ChatterboxTTS
+            self._model = ChatterboxTTS.from_pretrained(device=device)
+```
+
+**Turbo Special Tokens**:
+- `[laugh]` - Generates laughter
+- `[sigh]` - Generates sighing
+- Automatic prosody improvements (better pause placement, emotion)
+
+**HuggingFace Token Management**:
+```python
+# Token storage: ~/.voice_revolver/config.json
+{
+    "hf_token": "hf_xxxxxxxxxxxxxxxxxxxxx"
+}
+
+# UI: Password-masked input field with save button
+# Auto-loads on startup, required only for Turbo mode
+```
+
+**Export Options**:
+- Checkbox: "Use edited version" (exports curve-edited audio vs. original TTS)
+- Formats: WAV, MP3, FLAC
+- Quality preservation: Non-compounding edit pattern
+
+**UI Enhancements**:
+```python
+# Zoom controls for spectrum editor
+zoom_in_btn = ttk.Button(text="🔍+")   # Zoom in spectrogram
+zoom_out_btn = ttk.Button(text="🔍−")  # Zoom out
+zoom_reset_btn = ttk.Button(text="↻")   # Reset zoom
+
+# Preview playback (removed duplicate controls - use spectrum editor's built-in player)
+```
+
+**Critical Fix**: Unicode Logging
+```python
+# OLD (crashed on Windows console):
+logger.info("🎤 Starting TTS generation...")
+
+# NEW (Windows-safe):
+logger.info("[*] Starting TTS generation...")
+```
+
+---
+
+### 4. Voice Cloning Workspace
+
+**Purpose**: Clone voice using audio samples (ChatterBox VC) or RVC models
+
+**File Structure**:
+```
+voice_revolver_ui/features/voice_cloning/
+├── __init__.py
+├── workspace.py
+└── components/
+    ├── __init__.py
+    ├── input_panel.py            # Original audio, reference selection, RVC params
+    └── output_panel.py           # Spectrum editor wrapper
+```
+
+**Processing Pipeline**:
+1. Select original audio (voice to be converted)
+2. Choose reference mode:
+   - **Audio File**: Use ChatterBox VC with audio sample
+   - **RVC Model**: Use RVC with trained .zip model
+3. If RVC: Configure parameters (F0 method, pitch shift, index rate, etc.)
+4. Process voice conversion
+5. Apply curve edits (pitch, reverb, volume)
+6. Export as WAV/MP3/FLAC/OGG
+
+**Dual Reference Mode**:
+
+**Mode 1: Audio File (ChatterBox VC)**
+```python
+# Zero-shot voice conversion using audio sample
+result_path, error = vc_wrapper.convert_voice(
+    source_audio_path=original_path,
+    target_voice_path=reference_audio,  # .wav/.mp3/.flac
+    output_path=output_path
+)
+```
+
+**Mode 2: RVC Model**
+```python
+# Load RVC model from .zip
+success, error = rvc_wrapper.load_model_from_zip(reference_model_zip)
+
+# Convert with advanced parameters
+result_path, error = rvc_wrapper.convert_voice(
+    source_audio_path=original_path,
+    output_path=output_path,
+    f0_method="rmvpe",      # Pitch extraction: rmvpe/harvest/crepe/pm
+    f0_up_key=0,            # Pitch shift: -12 to +12 semitones
+    index_rate=0.75,        # Timbre match strength: 0.0-1.0
+    protect=0.33,           # Consonant protection: 0.0-0.5
+    filter_radius=3,        # Pitch smoothing: 0-7
+    rms_mix_rate=0.25       # Volume envelope mix: 0.0-1.0
+)
+```
+
+**RVC Parameter UI**:
+```python
+# Each parameter has:
+# - LabeledSlider (label | slider | value entry | reset button)
+# - Help text description below slider
+# - "Reset All to Defaults" button
+
+# Example parameter descriptions:
+"F0 Method": "Pitch extraction algorithm (rmvpe=best quality, harvest=stable)"
+"Index Rate": "Feature retrieval strength (higher=better timbre match, 0.75 recommended)"
+"Protection": "Protect voiceless consonants (s, t, k sounds - prevents over-smoothing)"
+"Filter Radius": "Median filtering for pitch curve (higher=smoother pitch, less vibrato)"
+"RMS Mix Rate": "Volume envelope mixing (0=converted only, 1=source only, 0.25=balanced)"
+```
+
+**Dynamic File Type Filtering**:
+```python
+class InputPanel:
+    def _on_reference_mode_changed(self):
+        mode = self.reference_mode_var.get()
+        if mode == "rvc":
+            # Show RVC parameters
+            self.rvc_params_frame.grid()
+            # Accept only .zip files
+            self.reference_selector.set_file_types((
+                ("RVC Models", "*.zip"),
+                ("All Files", "*.*")
+            ))
+        else:
+            # Hide RVC parameters
+            self.rvc_params_frame.grid_remove()
+            # Accept only audio files
+            self.reference_selector.set_file_types((
+                ("Audio Files", "*.wav *.mp3 *.flac"),
+                ("All Files", "*.*")
+            ))
+```
+
+**Temp File Workflow** (Non-Compounding Pattern):
+```
+C:\Users\{user}\AppData\Local\VoiceRevolverAI\temp\voice_cloning\
+├── processed.wav             # Original voice clone output (IMMUTABLE)
+├── processed_edited.wav      # Latest curve-edited version (OVERWRITES each edit)
+├── temp_pitch.wav           # Intermediate: pitch applied
+├── temp_volume.wav          # Intermediate: volume applied
+└── temp_reverb.wav          # Intermediate: reverb applied
+```
+
+**Non-Compounding Edit Pattern**:
+```python
+def _apply_curves_worker(self):
+    # ALWAYS start from original processed file
+    current_audio = self.processed_audio_path  # processed.wav (never modified!)
+    
+    # Apply curves sequentially
+    if pitch_curve.has_edits():
+        current_audio = apply_pitch_curve(current_audio, temp_pitch.wav)
+    
+    if volume_curve.has_edits():
+        current_audio = apply_volume_curve(current_audio, temp_volume.wav)
+    
+    if reverb_curve.has_edits():
+        current_audio = apply_reverb_curve(current_audio, temp_reverb.wav)
+    
+    # Overwrite processed_edited.wav with final result
+    shutil.copy(current_audio, processed_edited.wav)
+```
+
+**Export Logic**:
+```python
+def _on_export_clicked(self):
+    use_edited = self.input_panel.get_use_edited()  # Checkbox state
+    
+    if use_edited and self.edited_audio_path.exists():
+        source_path = self.edited_audio_path  # Export edited version
+    elif use_edited:
+        messagebox.showwarning(
+            "No Edited Version",
+            "Apply curve changes first, or uncheck 'Use edited version'."
+        )
+        return
+    else:
+        source_path = self.processed_audio_path  # Export original conversion
+```
+
+**File Lock Prevention**:
+```python
+def _on_process_clicked(self):
+    # Release previous audio before new processing
+    self.output_panel.release_audio_file()  # Close spectrum editor's file handle
+    
+    # Clean up old temp files to prevent file locks
+    temp_dir = self.file_manager.get_workspace_temp_dir("voice_cloning")
+    for old_file in temp_dir.glob("*.wav"):
+        try:
+            old_file.unlink()
+        except Exception as e:
+            logger.warning(f"Could not delete {old_file.name}: {e}")
+```
+
+**Progress Callback Compatibility**:
+```python
+# Handle both single-argument (ChatterBox VC) and dual-argument (RVC) callbacks
+def progress_cb(percent, message=None):
+    if message is None:
+        # ChatterBox VC: Only sends percent (0.0-1.0)
+        message = f"Processing... {int(percent * 100)}%"
+    # RVC: Sends both percent and message
+    self.root.after(0, self._update_progress, percent * 100, message)
+```
+
+---
+
+## UI Component Patterns
+
+Voice Revolver AI features a library of reusable UI components to ensure consistency across workspaces and reduce code duplication.
+
+### Component Library Overview
+
+| Component | Purpose | Workspaces Used | File Path |
+|-----------|---------|-----------------|-----------|
+| **FileSelector** | File/folder picker with browse button | All 4 workspaces | `voice_revolver_ui/components/file_selector.py` |
+| **LabeledSlider** | Slider with label, value entry, reset button | Vocal Changer, Voice Cloning | `voice_revolver_ui/components/labeled_slider.py` |
+| **SpectrumEditor** | Audio visualization with curve editing | All 4 workspaces | `voice_revolver_ui/components/spectrum_editor.py` |
+
+---
+
+### 1. FileSelector Component
+
+**Purpose**: Unified file/folder picker with consistent UX
+
+**Features**:
+- Text entry field (manual path input)
+- Browse button (opens file/folder dialog)
+- Dynamic file type filtering
+- Validation callbacks
+- Label customization
+
+**API**:
+```python
+from voice_revolver_ui.components.file_selector import FileSelector
+
+# Basic file selector
+file_selector = FileSelector(
+    parent=parent_frame,
+    label="Input Audio:",
+    mode="file",                           # "file" or "directory"
+    file_types=(
+        ("Audio Files", "*.wav *.mp3 *.flac"),
+        ("All Files", "*.*")
+    )
+)
+
+# Get selected path
+selected_path = file_selector.get_path()
+
+# Set path programmatically
+file_selector.set_path("/path/to/file.wav")
+
+# Dynamic file type filtering (Voice Cloning use case)
+def on_mode_changed():
+    if mode == "rvc":
+        file_selector.set_file_types((
+            ("RVC Models", "*.zip"),
+            ("All Files", "*.*")
+        ))
+    else:
+        file_selector.set_file_types((
+            ("Audio Files", "*.wav *.mp3 *.flac"),
+            ("All Files", "*.*")
+        ))
+```
+
+**Layout**:
+```
+┌────────────────────────────────────────────────┐
+│ Label:        [Path Entry Field]  [Browse...]  │
+└────────────────────────────────────────────────┘
+```
+
+**Key Method**:
+```python
+def set_file_types(self, file_types):
+    """Update file type filters dynamically.
+    
+    Args:
+        file_types: Tuple of (description, pattern) tuples
+                   Example: (("Audio Files", "*.wav *.mp3"), ("All", "*.*"))
+    """
+    self.file_types = file_types
+```
+
+**Usage Pattern**:
+- **Vocal Changer**: Original audio, reference audio, RVC model, output directory
+- **Audio Separation**: Input audio, output directory
+- **Text-to-Speech**: Output directory
+- **Voice Cloning**: Original audio, reference (audio/RVC model), output directory
+
+---
+
+### 2. LabeledSlider Component
+
+**Purpose**: Parameter control with visual feedback and manual input
+
+**Features**:
+- Slider widget (continuous value adjustment)
+- Label (parameter name)
+- Value display (real-time updates)
+- Entry field (manual numeric input)
+- Reset button (restore default value)
+- Optional description text below slider
+
+**API**:
+```python
+from voice_revolver_ui.components.labeled_slider import LabeledSlider
+
+# Create slider
+slider = LabeledSlider(
+    parent=parent_frame,
+    label="Pitch Shift",
+    from_=-12,              # Minimum value
+    to=12,                  # Maximum value
+    resolution=1,           # Step size (1 = integer only)
+    default=0,              # Default value (for reset button)
+    orient="horizontal",
+    command=on_value_changed  # Callback function(value)
+)
+
+# Get value
+pitch_shift = slider.get()
+
+# Set value programmatically
+slider.set(5)
+
+# With description text (Voice Cloning RVC parameters)
+index_rate_slider = LabeledSlider(
+    parent=rvc_params_frame,
+    label="Index Rate",
+    from_=0.0,
+    to=1.0,
+    resolution=0.01,
+    default=0.75
+)
+# Add description label below
+ttk.Label(
+    rvc_params_frame,
+    text="Feature retrieval strength (higher=better timbre match, 0.75 recommended)",
+    font=("Segoe UI", 8),
+    foreground="gray"
+).grid(sticky="w", padx=(10, 0))
+```
+
+**Layout**:
+```
+┌─────────────────────────────────────────────────┐
+│ Label:     [━━━━━━━━━━━━━━━●━━━━━]  0.75  [↻]  │
+│            ↑ Slider            ↑ Entry  ↑ Reset │
+│                                                  │
+│   Description text (optional, gray, small font) │
+└─────────────────────────────────────────────────┘
+```
+
+**Synchronization**:
+```python
+class LabeledSlider:
+    def __init__(self, ...):
+        self.slider.bind("<Motion>", self._update_entry_from_slider)
+        self.entry.bind("<Return>", self._update_slider_from_entry)
+        
+    def _update_entry_from_slider(self, event=None):
+        """Slider dragged → update entry field"""
+        self.entry_var.set(f"{self.slider.get():.2f}")
+    
+    def _update_slider_from_entry(self, event=None):
+        """Entry changed → update slider position"""
+        try:
+            value = float(self.entry_var.get())
+            self.slider.set(value)
+        except ValueError:
+            pass  # Ignore invalid input
+```
+
+**Usage Pattern**:
+- **Vocal Changer**: Not currently used (uses custom RVC parameter panel)
+- **Voice Cloning**: 6 RVC parameters (F0 method, pitch shift, index rate, protection, filter radius, RMS mix)
+
+---
+
+### 3. SpectrumEditor Component
+
+**Purpose**: Audio visualization with interactive curve editing
+
+**Features**:
+- Spectrogram display (librosa STFT + mel scaling)
+- Playback controls (play/pause/stop, timeline scrubbing)
+- Curve editors (pitch, reverb, volume, blend, noise)
+- Zoom controls (zoom in/out/reset)
+- Point-based curve editing (click to add, drag to move, right-click to delete)
+- Real-time visual feedback
+
+**API**:
+```python
+from voice_revolver_ui.components.spectrum_editor import SpectrumEditor
+
+# Create spectrum editor
+spectrum_editor = SpectrumEditor(
+    parent=parent_frame,
+    enable_instrumental_mode=True  # Show instrumental volume curve
+)
+
+# Load audio
+spectrum_editor.load_vocals(audio_path)
+
+# Get edited curves (direct attribute access)
+pitch_curve = spectrum_editor.pitch_curve
+reverb_curve = spectrum_editor.reverb_curve
+volume_curve = spectrum_editor.volume_curve
+
+# Check if curve has edits
+if pitch_curve.has_edits():
+    apply_pitch_transformation(audio, pitch_curve)
+
+# Get curve data
+curve_data = pitch_curve.get_curve_data()
+# Returns: List of (time, value) tuples
+# Example: [(0.0, 0), (5.5, +2), (10.0, -1), ...]
+
+# Reload audio (preserve curves)
+spectrum_editor.reload_audio_only(new_audio_path)
+
+# Release file handle (prevent file locks)
+spectrum_editor.release_audio_file()
+```
+
+**Curve Types**:
+
+| Curve | Value Range | Purpose | Units |
+|-------|-------------|---------|-------|
+| **Pitch** | -12 to +12 | Semitone adjustment over time | Semitones |
+| **Reverb** | 0.0 to 1.0 | Reverb wet/dry mix | Ratio (0=dry, 1=wet) |
+| **Volume** | -20 to +20 | Volume adjustment over time | dB |
+| **Blend** | 0.0 to 1.0 | Original/converted voice mix | Ratio (0=original, 1=converted) |
+| **Instrumental** | 0.0 to 1.0 | Background music volume | Ratio (0=muted, 1=full) |
+| **Noise** | 0.0 to 1.0 | Noise reduction strength | Ratio (0=none, 1=max) |
+
+**Curve Data Structure**:
+```python
+class Curve:
+    def __init__(self, min_val, max_val, default_val):
+        self.points = []  # List of (time, value) tuples
+        
+    def add_point(self, time, value):
+        """Add control point (time in seconds, value in curve's range)"""
+        self.points.append((time, value))
+        self.points.sort(key=lambda p: p[0])  # Keep sorted by time
+    
+    def remove_point(self, index):
+        """Remove control point by index"""
+        del self.points[index]
+    
+    def get_value_at_time(self, time):
+        """Linear interpolation between control points"""
+        if not self.points:
+            return self.default_val
+        
+        # Find surrounding points
+        for i in range(len(self.points) - 1):
+            t1, v1 = self.points[i]
+            t2, v2 = self.points[i + 1]
+            
+            if t1 <= time <= t2:
+                # Linear interpolation
+                ratio = (time - t1) / (t2 - t1)
+                return v1 + (v2 - v1) * ratio
+        
+        # Before first point or after last point
+        return self.points[0][1] if time < self.points[0][0] else self.points[-1][1]
+    
+    def has_edits(self):
+        """Check if any non-default points exist"""
+        return len(self.points) > 0
+```
+
+**Interaction Model**:
+```
+Left Click:      Add/Move control point
+Right Click:     Delete control point
+Mouse Drag:      Scrub timeline (during playback)
+Space Bar:       Play/Pause
+Mouse Wheel:     Zoom spectrogram
+```
+
+**Spectrogram Generation**:
+```python
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+
+def generate_spectrogram(audio_path):
+    # Load audio
+    y, sr = librosa.load(audio_path, sr=None)
+    
+    # Compute STFT (Short-Time Fourier Transform)
+    D = librosa.stft(y)
+    
+    # Convert to mel scale spectrogram
+    S_db = librosa.amplitude_to_db(np.abs(D), ref=np.max)
+    
+    # Display using matplotlib
+    fig, ax = plt.subplots()
+    img = librosa.display.specshow(
+        S_db,
+        sr=sr,
+        x_axis='time',
+        y_axis='mel',
+        ax=ax,
+        cmap='viridis'
+    )
+    
+    return fig, ax
+```
+
+**Usage Pattern**:
+- **Vocal Changer**: Main editor (vocals) + instrumental volume curve
+- **Audio Separation**: 4 editors (vocals, drums, bass, other) - one per track
+- **Text-to-Speech**: Single editor for TTS output
+- **Voice Cloning**: Single editor for voice clone output
+
+**Critical Pattern**: Reload Without Losing Curves
+```python
+# ❌ BAD: Creates new spectrum editor (loses curves)
+def reload_audio_bad(self, new_audio_path):
+    self.spectrum_editor.destroy()
+    self.spectrum_editor = SpectrumEditor(self.parent)
+    self.spectrum_editor.load_vocals(new_audio_path)
+    # ❌ All curve edits are lost!
+
+# ✅ GOOD: Reload audio in existing editor (preserves curves)
+def reload_audio_good(self, new_audio_path):
+    self.spectrum_editor.reload_audio_only(new_audio_path)
+    # ✅ Curves are preserved!
+```
+
+---
+
 ## Architecture Patterns
+````
 
 ### 1. **Hexagonal Architecture (Ports & Adapters)**
 
@@ -1202,10 +1960,11 @@ Invoke-WebRequest `
 |---------|------|-------------|
 | 1.0.0 | Feb 2026 | Initial release with dual-reference support |
 | 1.0.1 | Feb 2026 | Migrated from rvc-python to Applio (Python 3.11 fix) |
-| 1.1.0 | Feb 2026 | Added gender-aware voice conversion with F0-based pitch adaptation |
+| 1.1.0 | Feb 20, 2026 | Added gender-aware voice conversion with F0-based pitch adaptation |
+| 1.2.0 | Feb 23, 2026 | **Voice Cloning Workspace**: Dual reference modes (Audio File/RVC Model), RVC parameter controls with descriptions, non-compounding curve editing, export checkbox, dynamic file type filtering |
 
 ---
 
 **Document Maintained By**: Voice Revolver AI Development Team  
-**Last Updated**: February 20, 2026  
+**Last Updated**: February 23, 2026  
 **License**: MIT

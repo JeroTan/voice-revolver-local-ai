@@ -53,7 +53,7 @@ class MenuBar:
         workspace_menu.add_command(label="Text to Speech")
         self.workspace_items["text_to_speech"] = 2
         
-        workspace_menu.add_command(label="Voice Cloning (Coming Soon)", state="disabled")
+        workspace_menu.add_command(label="Voice Cloning (Coming Soon)")
         self.workspace_items["voice_cloning"] = 3
         
         workspace_menu.add_command(label="Voice Training (Coming Soon)", state="disabled")

@@ -128,3 +128,12 @@ class FileSelector(ttk.Frame):
         state = 'normal' if enabled else 'disabled'
         self.entry.config(state=state)
         self.browse_btn.config(state=state)
+    
+    def set_file_types(self, file_types: Tuple[Tuple[str, str], ...]):
+        """Update file type filters (for file mode only).
+        
+        Args:
+            file_types: New file type filters, e.g.,
+                       (("Audio Files", "*.wav *.mp3"), ("All Files", "*.*"))
+        """
+        self.file_types = file_types
