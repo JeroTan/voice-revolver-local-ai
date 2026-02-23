@@ -130,6 +130,7 @@ Voice Revolver AI features a **modular workspace system** with four distinct wor
 | **Text-to-Speech** | Generate speech from text | ChatterBox TTS (+ Turbo) | ✅ Complete |
 | **Voice Cloning** | Clone voice using audio samples or RVC models | ChatterBox VC, RVC | ✅ Complete |
 | **Voice Enhancement** | Enhance audio quality with AI denoising | Resemble Enhance, Blend Mode | ✅ Complete |
+| **Track Merger** | Merge multiple audio tracks into one | pydub AudioSegment, pygame | ✅ Complete |
 
 ### Common Workspace Pattern
 
@@ -698,6 +699,127 @@ def _on_export_clicked(self):
         return
     else:
         source_path = self.enhanced_audio_path  # Export pristine enhanced
+```
+
+---
+
+### 6. Track Merger Workspace
+
+**Purpose**: Merge multiple audio tracks into a single combined audio file
+
+**Key Features**:
+- Add unlimited tracks (up to 999 limit for UI sanity)
+- Per-track volume control (0-200%)
+- Renameable track names for organization
+- Per-track waveform visualization
+- Per-track playback with seek slider
+- Merged output with curve editing (pitch, volume, reverb)
+- 50/50 layout: Track list (left) | Spectrum editor (right)
+- Export with format selection (WAV/MP3/FLAC/OGG)
+
+**Component Structure**:
+```
+voice_revolver_ui/features/track_merger/
+├── __init__.py                    # Exports TrackMergerWorkspace
+├── workspace.py                   # Main workspace orchestration (541 lines)
+└── components/
+    ├── __init__.py               # Component exports
+    ├── input_panel.py            # Track list + controls (829 lines)
+    └── output_panel.py           # Spectrum editor wrapper (123 lines)
+```
+
+**Track Item UI Layout** (per track):
+```
+┌────────────────────────────────────────────────────────┐
+│ [Editable Track Name Entry]              [✕ Close]    │  Row 0
+├────────────────────────────────────────────────────────┤
+│ [████ Waveform Canvas ████████████████] [Vol] [100%]  │  Row 1
+├────────────────────────────────────────────────────────┤
+│ [▶] [======= Seek Slider =======] [0:00 / 3:45]       │  Row 2
+└────────────────────────────────────────────────────────┘
+```
+
+**TrackItem Data Class**:
+```python
+class TrackItem:
+    track_id: int           # Unique ID
+    file_path: Path         # Audio file path
+    display_name: str       # Renameable track name
+    volume: float           # 0.0 to 2.0 (100% = 1.0)
+    is_playing: bool        # Playback state
+    duration_ms: int        # Track duration in ms
+    
+    # UI elements
+    frame: ttk.Frame
+    name_var: tk.StringVar         # Editable name
+    volume_var: tk.DoubleVar       # Volume slider
+    volume_label: ttk.Label        # "100%"
+    play_button: ttk.Button        # ▶ / ⏹
+    waveform_canvas: tk.Canvas     # Mini waveform
+    seek_slider: ttk.Scale         # Position slider
+    seek_var: tk.DoubleVar         # 0-100%
+    time_label: ttk.Label          # "0:00 / 3:45"
+```
+
+**Merge Implementation** (using pydub):
+```python
+def _merge_worker(self):
+    tracks = self.input_panel.get_tracks()
+    
+    # Load all tracks as AudioSegments
+    segments = []
+    for track in tracks:
+        segment = AudioSegment.from_file(str(track['file_path']))
+        
+        # Apply per-track volume (dB conversion)
+        volume = track['volume']  # 0.0 to 2.0
+        if volume != 1.0:
+            db_change = 20 * math.log10(volume) if volume > 0 else -120
+            segment = segment + db_change
+        
+        segments.append(segment)
+    
+    # Overlay all tracks (pydub overlay handles timing)
+    merged = segments[0]
+    for segment in segments[1:]:
+        merged = merged.overlay(segment)
+    
+    # Auto-normalize if clipping
+    if merged.max_dBFS > -1.0:
+        merged = merged.normalize()
+    
+    merged.export(self.merged_audio_path, format="wav")
+```
+
+**Waveform Generation** (async with librosa):
+```python
+def _load_waveform_data(self, file_path: Path) -> np.ndarray:
+    # Low sample rate for speed
+    y, sr = librosa.load(str(file_path), sr=8000, mono=True, duration=60)
+    
+    # Downsample to WAVEFORM_WIDTH pixels
+    samples_per_pixel = max(1, len(y) // WAVEFORM_WIDTH)
+    envelope = [np.max(np.abs(y[i:i+samples_per_pixel])) 
+                for i in range(0, len(y), samples_per_pixel)]
+    
+    return np.array(envelope)
+```
+
+**Temp File Workflow**:
+```
+C:\Users\{user}\AppData\Local\VoiceRevolverAI\temp\track_merger\
+├── merged.wav              # Merged audio (IMMUTABLE after merge)
+├── merged_edited.wav       # Latest curve-edited version
+├── temp_pitch.wav         # Intermediate: pitch applied
+├── temp_volume.wav        # Intermediate: volume applied
+└── temp_reverb.wav        # Intermediate: reverb applied
+```
+
+**Constants**:
+```python
+MAX_TRACKS = 999           # Internal limit (warning dialog if exceeded)
+WAVEFORM_HEIGHT = 65       # Canvas height for mini waveform
+WAVEFORM_WIDTH = 200       # Sample points for waveform
 ```
 
 ---
@@ -2123,6 +2245,7 @@ Invoke-WebRequest `
 | 1.1.0 | Feb 20, 2026 | Added gender-aware voice conversion with F0-based pitch adaptation |
 | 1.2.0 | Feb 23, 2026 | **Voice Cloning Workspace**: Dual reference modes (Audio File/RVC Model), RVC parameter controls with descriptions, non-compounding curve editing, export checkbox, dynamic file type filtering |
 | 1.3.0 | Feb 23, 2026 | **Voice Enhancement Workspace**: Resemble Enhance AI integration, blend mode A/B comparison (original ↔ enhanced), curve editing support (blend first → pitch → volume → reverb), sample rate preservation, "Use edited audio" checkbox |
+| 1.4.0 | Feb 23, 2026 | **Track Merger Workspace**: Merge unlimited audio tracks (999 limit), per-track volume/waveform/playback with seek slider, renameable track names, pydub overlay merge, curve editing (pitch/volume/reverb), export format selection (WAV/MP3/FLAC/OGG) |
 
 ---
 

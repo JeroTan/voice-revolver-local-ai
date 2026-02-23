@@ -1,11 +1,13 @@
 # Product Requirements Document: Voice Revolver AI
 
-**Version**: 1.2 (Workspace Expansion Update)  
+**Version**: 1.4 (Track Merger Workspace)  
 **Date**: 2026-02-23  
 **Author**: Sarah (Product Owner)  
 **Quality Score**: 100/100
 
 **Version History:**
+- **v1.4** (2026-02-23): Added Track Merger workspace for combining multiple audio tracks
+- **v1.3** (2026-02-23): Added Voice Enhancement workspace with Resemble Enhance AI, blend mode
 - **v1.2** (2026-02-23): Added Voice Cloning workspace with dual reference modes, RVC parameter controls, curve editing
 - **v1.1** (2026-02-20): Added dual-reference voice conversion (Audio + Model modes), Applio RVC integration
 - **v1.0** (2026-02-18): Initial release with ChatterBox VC
@@ -39,6 +41,8 @@ Voice Revolver AI features a **modular workspace system** with four distinct wor
 | **Audio Separation** | Standalone stem isolation and editing | 4-track editing (vocals, drums, bass, other), per-track curves | ✅ Complete |
 | **Text-to-Speech** | Generate speech from text | 23 languages (MTL), Turbo mode (English), curve editing | ✅ Complete |
 | **Voice Cloning** | Voice conversion with audio/model | ChatterBox VC + RVC, 6 RVC parameters, export controls | ✅ Complete |
+| **Voice Enhancement** | Enhance audio quality with AI | Resemble Enhance, blend mode A/B comparison | ✅ Complete |
+| **Track Merger** | Merge multiple audio tracks | Per-track volume/waveform/playback, curve editing, format export | ✅ Complete |
 
 ### Workspace 1: Vocal Changer (Original)
 
@@ -180,6 +184,87 @@ C:\Users\{user}\AppData\Local\VoiceRevolverAI\temp\voice_cloning\
 - ✅ File locking issues - Temp file cleanup before processing
 - ✅ Reference mode filtering - Dynamic file type updates via `set_file_types()`
 - ✅ VoiceTransformer missing method - Replaced with AudioProcessor
+
+### Workspace 5: Voice Enhancement **(NEW in v1.3)**
+
+**Purpose**: Enhance audio quality using Resemble Enhance AI
+
+**User Flow**:
+1. Load original audio file
+2. Configure enhancement parameters (NFE, temperature, solver, denoise first)
+3. Process → Resemble Enhance AI
+4. Use blend mode: A/B comparison (original ↔ enhanced)
+5. Edit curves (blend, pitch, volume, reverb)
+6. Apply Changes → Preview edits
+7. Export as WAV/MP3/FLAC/OGG
+
+**Key Features**:
+- **4 Enhancement Parameters**:
+  - Quality (NFE): 1-128 (1=fast, 128=best quality)
+  - Temperature: 0.01-1.0 (0.01=conservative, 1.0=aggressive)
+  - Solver: euler/midpoint/rk4
+  - Denoise First: Pre-process with noise reduction
+- **Blend Mode**: Real-time A/B comparison between original and enhanced
+- **Curve Order**: Blend → Pitch → Volume → Reverb
+- **Sample Rate Preservation**: Enhanced audio matches original sample rate
+
+### Workspace 6: Track Merger **(NEW in v1.4)**
+
+**Purpose**: Merge multiple audio tracks into a single combined audio file
+
+**User Flow**:
+1. Add Track → Select audio files (unlimited, up to 999)
+2. Per-track: Rename, adjust volume, preview playback
+3. Merge Tracks → Combine with pydub overlay
+4. Edit curves (pitch, volume, reverb) on merged output
+5. Apply Changes → Preview edits
+6. Export as WAV/MP3/FLAC/OGG
+
+**Key Features**:
+- **Unlimited Track Adding**: Add up to 999 tracks (internal limit)
+- **Per-Track Controls**:
+  - Editable track name (for organization)
+  - Waveform visualization (65px canvas)
+  - Volume slider (0-200%, default 100%)
+  - Playback with seek slider and time display
+  - Remove button (close track)
+- **Merge Logic**:
+  - pydub AudioSegment overlay
+  - Per-track volume applied as dB change
+  - Auto-normalize if merged audio clips
+- **Curve Editing**: Pitch, volume, reverb on merged output
+- **Export**: WAV, MP3, FLAC, OGG with "Use edited version" checkbox
+
+**Track Item UI Layout**:
+```
+┌────────────────────────────────────────────────┐
+│ [Editable Track Name]              [✕ Close] │  Row 0
+├────────────────────────────────────────────────┤
+│ [███ Waveform Canvas ███] [Vol] [100%] │  Row 1
+├────────────────────────────────────────────────┤
+│ [▶] [=== Seek Slider ===] [0:00/3:45]  │  Row 2
+└────────────────────────────────────────────────┘
+```
+
+**Temp File Workflow**:
+```
+C:\Users\{user}\AppData\Local\VoiceRevolverAI\temp\track_merger\
+├── merged.wav              # Merged audio (IMMUTABLE after merge)
+├── merged_edited.wav       # Latest curve-edited version
+├── temp_pitch.wav         # Intermediate: pitch applied
+├── temp_volume.wav        # Intermediate: volume applied
+└── temp_reverb.wav        # Intermediate: reverb applied
+```
+
+**UI Layout**: 50/50 split - Track list (left) | Spectrum editor (right)
+
+**Critical Technical Details**:
+- Uses pydub `AudioSegment.overlay()` for track merging
+- Volume applied as dB: `20 * log10(volume_multiplier)`
+- Auto-normalize if `merged.max_dBFS > -1.0`
+- Waveform generated async with librosa (8kHz, 60s max)
+- Playback via pygame.mixer.music
+- Tools panel pack order fix: pack tools FIRST, then canvas
 
 ---
 

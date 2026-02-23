@@ -53,9 +53,56 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ---
 
+## Development Commands
+
+```bash
+# Run the application
+./run.bat
+
+# Activate virtual environment manually
+& F:\dev\Python\voice-revolver-local-ai\.venv-1\Scripts\Activate.ps1
+```
+
+---
+
 ## Coding Standards
 
 ### CRITICAL LESSONS LEARNED
+
+#### Tkinter Pack Order - Tools Got Cut Off (2026-02-23)
+**Problem:** SpectrumEditor tools panel (Add/Move/Remove/Reset/Volume) was getting cut off on the right side.
+
+**ROOT CAUSE:** Wrong pack order - canvas packed FIRST with `expand=True`, tools packed SECOND.
+- When canvas packs first with `fill=BOTH, expand=True`, it takes ALL available space
+- Tools frame (packed second with `side=RIGHT`) has no space left → gets clipped
+
+**CORRECT SOLUTION:** Pack fixed-size elements FIRST, expanding elements LAST
+```python
+# ✅ CORRECT - Tools pack first to reserve space
+tool_frame = ttk.Frame(main_container, width=65)
+tool_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=20)
+tool_frame.pack_propagate(False)  # Maintain width
+
+canvas_frame = ttk.Frame(main_container)
+canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)  # Gets remaining space
+```
+
+**WRONG APPROACH:**
+```python
+# ❌ WRONG - Canvas packs first, takes all space
+canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)  # Takes everything!
+tool_frame.pack(side=tk.RIGHT, fill=tk.Y)  # No space left, gets clipped
+```
+
+**LESSON:**
+- **Tkinter pack order matters** - First packed widget gets priority
+- **Fixed-size elements pack FIRST** when using `side=RIGHT` or `side=LEFT`
+- **Expanding elements pack LAST** to fill remaining space
+- **SpectrumEditor is shared** - Used in Vocal Changer, Voice Enhancement, Track Merger
+
+**Keywords:** tkinter pack order, tools cut off, spectrum editor, side=RIGHT, expand
+
+---
 
 #### Tkinter Menu Management - The "Disabled State" Incident (2026-02-22)
 **Problem:** Spent excessive time trying to programmatically enable menu items that were created with `state="disabled"`.
@@ -273,6 +320,7 @@ voice_revolver_ui/
     ├── text_to_speech/        # ✅ TTS workspace (COMPLETED)
     ├── voice_cloning/         # ✅ Voice cloning workspace (COMPLETED - 2026-02-23)
     ├── voice_enhancement/     # ✅ Voice enhancement workspace (COMPLETED - 2026-02-23)
+    ├── track_merger/          # ✅ Track merger workspace (COMPLETED - 2026-02-23)
     └── voice_training/        # Future: Voice training workspace
 ```
 
@@ -464,6 +512,14 @@ def _switch_workspace(self, workspace_id):
     - Non-compounding edits (always starts from pristine enhanced.wav)
     - Sample rate preservation (enhanced matches original)
     - Export with "Use edited audio" checkbox
+  - ✅ Track Merger workspace - COMPLETED (2026-02-23)
+    - Merge unlimited audio tracks (up to 999 limit)
+    - Per-track: renameable name, waveform visualization, volume slider (0-200%)
+    - Per-track playback with seek slider and time display
+    - pydub AudioSegment overlay for merging with auto-normalize
+    - Curve editing: pitch, volume, reverb on merged output
+    - Export format selection: WAV/MP3/FLAC/OGG
+    - 50/50 layout: Track list (left) | Spectrum editor (right)
   - Voice Training workspace (Future)
 
 ---
@@ -507,6 +563,7 @@ def _switch_workspace(self, workspace_id):
   ├── text_to_speech/         # ✅ TTS workspace
   ├── voice_cloning/          # ✅ Voice cloning workspace (COMPLETED 2026-02-23)
   ├── voice_enhancement/      # ✅ Voice enhancement workspace (COMPLETED 2026-02-23)
+  ├── track_merger/           # ✅ Track merger workspace (COMPLETED 2026-02-23)
   └── voice_training/         # Future workspace (ready)
   ```
 - **Test Organization:**
@@ -1989,6 +2046,106 @@ voice_revolver_core/
   - **Blend curve goes FIRST**: Blend → Pitch → Volume → Reverb (not the other way around)
   - **Sample rate preservation**: Enhanced must match original to prevent visualization issues
   - **Blend mode is the whole point**: Never disable it in this workspace
+
+---
+
+### 2026-02-23 | Track Merger Workspace Implementation ✅ COMPLETED
+- **Topic:** Implemented Track Merger workspace for merging multiple audio tracks
+- **Motivation:** Allow users to combine unlimited audio tracks into a single merged output with per-track controls
+- **Implementation:**
+  1. **Workspace Structure** (`voice_revolver_ui/features/track_merger/`):
+     - `workspace.py` (541 lines): Main workspace orchestration
+     - `components/input_panel.py` (829 lines): Track list with per-track controls
+     - `components/output_panel.py` (123 lines): Spectrum editor wrapper
+  
+  2. **Track Item UI** (per track row):
+     - Row 0: Editable track name (Entry) + Close button (✕)
+     - Row 1: Waveform canvas (65px height) + Vertical volume slider (0-200%)
+     - Row 2: Play button (▶/⏹) + Seek slider + Time label (0:00 / 3:45)
+  
+  3. **Track Item Data Model** (`TrackItem` class):
+     - `track_id`: Unique identifier
+     - `file_path`: Path to audio file
+     - `display_name`: Renameable track name
+     - `volume`: 0.0 to 2.0 multiplier
+     - `is_playing`: Playback state
+     - `duration_ms`: Track duration
+     - UI elements: frame, name_var, volume_var, play_button, waveform_canvas, seek_slider, time_label
+
+  4. **Per-Track Features**:
+     - **Waveform**: Generated async with librosa (8000 Hz, 60s max, envelope downsampling)
+     - **Playback**: pygame.mixer.music with play/stop toggle
+     - **Seek**: Position slider updates during playback (200ms polling)
+     - **Volume**: Vertical slider 0-200%, dB conversion for merge
+     - **Rename**: Track name entry with focus-out/enter commit
+     - **Remove**: Close button with cleanup
+
+  5. **Merge Implementation** (pydub AudioSegment):
+     ```python
+     # Load all tracks with per-track volume
+     for track in tracks:
+         segment = AudioSegment.from_file(track['file_path'])
+         db_change = 20 * math.log10(track['volume']) if volume > 0 else -120
+         segment = segment + db_change
+     
+     # Overlay all tracks
+     merged = segments[0]
+     for segment in segments[1:]:
+         merged = merged.overlay(segment)
+     
+     # Auto-normalize if clipping
+     if merged.max_dBFS > -1.0:
+         merged = merged.normalize()
+     ```
+  
+  6. **Curve Editing** (SpectrumEditor):
+     - Pitch, Volume, Reverb curves on merged output
+     - No blend mode (single audio, not A/B comparison)
+     - Apply Changes uses AudioProcessor (pitch → volume → reverb)
+     - Non-compounding edits (starts from pristine merged.wav)
+  
+  7. **Export**:
+     - Format selector: WAV, MP3, FLAC, OGG
+     - "Use edited audio" checkbox
+     - Validates at least 2 tracks before merge
+
+  8. **Constraints**:
+     - MAX_TRACKS = 999 (warning dialog if exceeded)
+     - WAVEFORM_HEIGHT = 65 pixels
+     - 50/50 layout: Track list (left) | Spectrum editor (right)
+     - uniform="equal" + minsize for column widths
+
+  9. **SpectrumEditor Tools Fix**:
+     - **Bug**: Tools panel was getting cut off
+     - **Root cause**: Pack order - canvas packed FIRST took all space
+     - **Fix**: Pack tools FIRST (reserve 65px), then canvas gets remaining space
+
+- **Files Created**:
+  ```
+  voice_revolver_ui/features/track_merger/
+  ├── __init__.py                    # Package exports (TrackMergerWorkspace)
+  ├── workspace.py                   # Main workspace frame (541 lines)
+  └── components/
+      ├── __init__.py               # Component exports
+      ├── input_panel.py            # Track list + controls (829 lines)
+      └── output_panel.py           # Spectrum editor wrapper (123 lines)
+  ```
+
+- **Files Modified**:
+  - `voice_revolver_ui/main_tk.py` - Integrated track_merger workspace
+  - `voice_revolver_ui/features/menu_bar/menu_bar.py` - Added "Track Merger" (index 5)
+  - `voice_revolver_ui/features/vocal_changer/spectrum_editor.py` - Fixed pack order
+
+- **Success Metrics**:
+  - ✅ Add/remove unlimited tracks (up to 999)
+  - ✅ Per-track waveform visualization
+  - ✅ Per-track playback with seek slider
+  - ✅ Per-track vertical volume slider
+  - ✅ Renameable track names
+  - ✅ Merge tracks with volume normalization
+  - ✅ Curve editing on merged output
+  - ✅ Export with format selection
+  - ✅ Tools panel visible (pack order fix)
 
 ---
 

@@ -159,7 +159,12 @@ class SpectrumEditor(ttk.Frame):
         main_container = ttk.Frame(self)
         main_container.pack(fill=tk.BOTH, expand=True)
         
-        # Canvas frame (left side)
+        # Tool buttons frame (right side - vertical) - PACK FIRST to reserve space
+        tool_frame = ttk.Frame(main_container, width=65)
+        tool_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=20)
+        tool_frame.pack_propagate(False)  # Maintain width
+        
+        # Canvas frame (left side) - packs after tools to fill remaining space
         canvas_frame = ttk.Frame(main_container)
         canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -172,11 +177,6 @@ class SpectrumEditor(ttk.Frame):
         # Embed matplotlib canvas
         self.canvas = FigureCanvasTkAgg(self.fig, master=canvas_frame)
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        
-        # Tool buttons frame (right side - vertical)
-        tool_frame = ttk.Frame(main_container, width=65)
-        tool_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=20)
-        tool_frame.pack_propagate(False)  # Maintain width
         
         # Tool buttons label
         tool_label = ttk.Label(tool_frame, text="Tools", font=("Segoe UI", 8, "bold"))
