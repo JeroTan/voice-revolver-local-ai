@@ -98,11 +98,18 @@ class LoadingDialog:
             cache_status = model_manager.check_cache()
             
             if not all(cache_status.values()):
-                self.window.after(0, self.update_progress, 40, "Downloading OpenVoice models...", "This may take a few minutes")
+                self.window.after(0, self.update_progress, 40, "Downloading AI models...", "This may take a few minutes")
+                
+                # Friendly names for model types
+                model_names = {
+                    "openvoice": "OpenVoice",
+                    "demucs": "Demucs",
+                }
                 
                 def download_callback(model, prog):
+                    friendly_name = model_names.get(model, model)
                     percentage = 40 + int(prog * 50)
-                    self.window.after(0, self.update_progress, percentage, f"Downloading {model}...", f"Progress: {int(prog * 100)}%")
+                    self.window.after(0, self.update_progress, percentage, f"Downloading {friendly_name}...", f"Progress: {int(prog * 100)}%")
                 
                 # Run async download in sync context
                 import asyncio

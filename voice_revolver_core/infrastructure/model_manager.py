@@ -29,6 +29,9 @@ class ModelManager:
     # See AGENT_MEMORY.md for MDX installation instructions
     MDX_MODEL_NAME = "MDX23C-8KFFT-InstVoc_HQ.ckpt"
     
+    # RVC models are bundled with the portable app (not auto-downloaded)
+    # Located in: rvc/models/pretraineds/, rvc/models/embedders/, rvc/models/predictors/
+    
     def __init__(self, models_path: Path):
         self._models_path = models_path
         self._models_path.mkdir(parents=True, exist_ok=True)
@@ -49,6 +52,9 @@ class ModelManager:
         
         # Demucs models are downloaded by the package, we just check if package is available
         self._downloaded_models.add("demucs")
+        
+        # RVC models are bundled with the app (not auto-downloaded)
+        # Embedders have their own wget download in rvc/lib/utils.py
         
         # MDX is optional (separate venv-mdx), not checked here
         # MDX availability is checked in mdx_wrapper.py at runtime
@@ -94,6 +100,8 @@ class ModelManager:
         
         # Demucs is handled by the demucs package - just mark as available
         self._downloaded_models.add("demucs")
+        
+        # RVC models are bundled with the app - no auto-download needed
         
         # MDX is optional (separate venv-mdx), not auto-downloaded
         
@@ -191,7 +199,7 @@ class ModelManager:
         return {
             "demucs": "demucs" in self._downloaded_models,
             "openvoice": "openvoice" in self._downloaded_models,
-            # MDX not included - it's optional in separate venv-mdx
+            # RVC models bundled with app, MDX is optional
         }
     
     def clear_cache(self) -> int:

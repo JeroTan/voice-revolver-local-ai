@@ -62,8 +62,8 @@ class MenuBar:
         workspace_menu.add_command(label="Track Merger")
         self.workspace_items["track_merger"] = 5
         
-        workspace_menu.add_command(label="Voice Training (Coming Soon)", state="disabled")
-        self.workspace_items["voice_training"] = 6
+        workspace_menu.add_command(label="Audio Training")
+        self.workspace_items["audio_training"] = 6
         
         self.workspace_menu = workspace_menu
     

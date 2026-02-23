@@ -6,7 +6,7 @@
 
 Voice Revolver AI - A local-first desktop application for vocal replacement in songs. Uses AI (Demucs + ChatterBox VC) to separate vocals from a song and replace them with a reference voice. Built with DDD architecture for modularity.
 
-**Current State:** ChatterBox VC integration complete, replacing OpenVoice for better quality
+**Current State:** Audio Training workspace complete - RVC model training functional on Windows single-GPU
 **Goal:** Portable desktop app (Windows .exe, Mac .app)
 
 ---
@@ -266,6 +266,108 @@ shutil.move(source_vocals, final_vocals)
 4. Check temp files → Should use generic names like `input_audio.wav`, `vocals.wav`
 
 **Keywords for future agents:** Windows file locking, PermissionError, FileExistsError, shutil.move, retry logic, temp file cleanup, generic filenames, double temp path, file_manager initialization
+
+---
+
+#### RVC Training on Windows Single-GPU - The "Gloo Backend" Catastrophe (2026-02-23)
+**Problem:** RVC training completely broken on Windows with single GPU (RTX 4050):
+1. `RuntimeError: makeDeviceForHostname(): unsupported gloo device` - gloo distributed backend fails on Windows
+2. `FileNotFoundError: F:\dev\Python\voice-revolver-local-ai\logs\mute\sliced_audios\mute40000.wav` - mute training files missing
+3. Empty string argument `""` getting dropped by PowerShell, breaking parameter order
+4. `FileNotFoundError: F:\dev\Python\voice-revolver-local-ai\assets\config.json` - missing config for model extraction
+5. Training completed but "No model files found after training"
+
+**ROOT CAUSES:**
+1. **PyTorch gloo backend broken on Windows** - `dist.init_process_group(backend="gloo")` fails with Windows network stack
+2. **Mute files not bundled** - RVC expects pre-generated silent audio in `logs/mute/` for training augmentation
+3. **Shell argument dropping** - PowerShell drops empty strings `""` in subprocess args, shifting parameter positions
+4. **Missing assets folder** - RVC's `extract_model.py` expects `assets/config.json` for model metadata
+5. **Hardcoded `logs/` directory** - Training scripts used `logs/{model_name}` instead of configurable temp paths
+
+**WRONG APPROACHES:**
+```python
+# ❌ BAD - Always init distributed, even for single GPU
+dist.init_process_group(
+    backend="gloo",  # Fails on Windows!
+    init_method="tcp://127.0.0.1:29500",
+    world_size=1,
+    rank=0
+)
+
+# ❌ BAD - Empty string for optional arg
+cmd = [python, script, exp_dir, "rmvpe", "8", "0", "40000", "contentvec", "", "2"]
+#                                                                         ^^^ Dropped by shell!
+
+# ❌ BAD - Hardcoded paths
+experiment_dir = os.path.join(current_dir, "logs", model_name)  # Always logs/
+mute_base_path = os.path.join(current_directory, "logs", "mute")  # Expected to exist
+
+# ❌ BAD - Including mute files when they don't exist
+generate_filelist(exp_dir, sample_rate, include_mutes=2)  # Creates broken filelist
+```
+
+**CORRECT SOLUTIONS:**
+```python
+# ✅ 1. Skip distributed init for Windows single-GPU
+skip_distributed = (sys.platform == "win32" and n_gpus == 1)
+if skip_distributed:
+    rank = 0  # Just use rank 0, no distributed
+else:
+    dist.init_process_group(...)  # Only for multi-GPU or Linux
+
+# ✅ 2. Use "None" instead of empty string for optional args
+cmd = [python, script, exp_dir, "rmvpe", "8", "0", "40000", "contentvec", "None", "0"]
+#                                                                         ^^^^^^  Shell won't drop this
+
+# ✅ 3. Disable mute files (not bundled with app)
+generate_filelist(exp_dir, sample_rate, include_mutes=0)  # Don't reference missing files
+
+# ✅ 4. Pass experiment_dir as full path, not model_name
+# train.py first arg: C:\...\AppData\Local\VoiceRevolverAI\temp\audio_training\sample\logs
+experiment_dir = sys.argv[1]  # Full path from wrapper
+model_name = os.path.basename(os.path.dirname(experiment_dir))  # Extract from path
+
+# ✅ 5. Create assets/config.json for model extraction
+{
+    "precision": "fp32",
+    "model_author": "VoiceRevolverAI"
+}
+
+# ✅ 6. Changed all hardcoded "logs/" to use temp/ directory
+experiment_dir = os.path.join(current_dir, "temp", model_name)
+mute_base_path = os.path.join(current_directory, "temp", "mute")  # Updated from "logs"
+```
+
+**FILES MODIFIED:**
+1. `rvc/train/train.py`:
+   - Added `skip_distributed` flag for Windows single-GPU
+   - Changed first arg from `model_name` to `experiment_dir` (full path)
+   - Replaced all `"logs"` with `"temp"` in hardcoded paths
+2. `voice_revolver_core/infrastructure/rvc_training_wrapper.py`:
+   - Pass `str(self.logs_dir)` instead of `self.model_name` to train.py
+   - Changed `""` to `"None"` for `embedder_model_custom` arg
+   - Set `include_mutes=0` instead of `2`
+3. `assets/config.json`:
+   - Created new file with `precision` and `model_author` fields
+
+**LESSON:**
+- **Distributed training != always needed** - Single GPU doesn't need `dist.init_process_group()`
+- **Windows gloo backend is broken** - Known PyTorch issue, skip distributed for Windows single-GPU
+- **Shell argument handling varies** - PowerShell drops `""`, use `"None"` or other non-empty placeholder
+- **Don't assume bundled assets** - Mute files are training data, not always included
+- **Full paths > relative names** - Pass complete paths to scripts, extract names from them
+- **Hardcoded paths are technical debt** - Always make directory paths configurable
+- **Test with subprocess** - Command-line arg passing behaves differently than Python function calls
+- **Empty directories != OK** - Check if required files actually exist before referencing
+- **Model extraction needs metadata** - `assets/config.json` provides training precision and author info
+
+**TRAINING PERFORMANCE NOTES:**
+- 17 sec audio @ 200 epochs on RTX 4050 (6GB) = ~2 hours
+- Recommended: 5-15 min audio @ 50-100 epochs for better quality
+- CPU training: 10-50x slower than GPU (not recommended)
+- Cloud GPU rental (RunPod/Vast.ai): ~$0.30/hr for RTX 3090 (cost-effective for occasional training)
+
+**Keywords for future agents:** RVC training Windows, gloo backend error, distributed training, single GPU, PowerShell empty string, include_mutes, mute files, assets config.json, temp directory, experiment_dir argument
 
 ---
 

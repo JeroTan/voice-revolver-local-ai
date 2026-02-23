@@ -52,6 +52,7 @@ from voice_revolver_ui.features.text_to_speech import TextToSpeechWorkspace
 from voice_revolver_ui.features.voice_cloning import VoiceCloningWorkspace
 from voice_revolver_ui.features.voice_enhancement import VoiceEnhancementWorkspace
 from voice_revolver_ui.features.track_merger import TrackMergerWorkspace
+from voice_revolver_ui.features.audio_training import AudioTrainingWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -571,6 +572,17 @@ class VoiceRevolverApp:
         self.track_merger_workspace.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.track_merger_workspace.grid_remove()  # Hidden initially
         
+        # Create Audio Training workspace (hidden initially)
+        self.audio_training_workspace = AudioTrainingWorkspace(
+            parent=self.workspace_container,
+            root=self.root,
+            app_data_path=self.app_data_path,
+            device=self.device,
+            log_callback=self.log
+        )
+        self.audio_training_workspace.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.audio_training_workspace.grid_remove()  # Hidden initially
+        
         # Enable all workspaces in menu
         self.menu_bar.enable_workspace("vocal_changer", lambda: self._switch_workspace("vocal_changer"))
         self.menu_bar.enable_workspace("audio_separation", lambda: self._switch_workspace("audio_separation"))
@@ -578,6 +590,7 @@ class VoiceRevolverApp:
         self.menu_bar.enable_workspace("voice_cloning", lambda: self._switch_workspace("voice_cloning"))
         self.menu_bar.enable_workspace("voice_enhancement", lambda: self._switch_workspace("voice_enhancement"))
         self.menu_bar.enable_workspace("track_merger", lambda: self._switch_workspace("track_merger"))
+        self.menu_bar.enable_workspace("audio_training", lambda: self._switch_workspace("audio_training"))
         
         # Set initial active workspace
         self.current_workspace = "vocal_changer"
@@ -605,6 +618,7 @@ class VoiceRevolverApp:
         self.voice_cloning_workspace.grid_remove()
         self.voice_enhancement_workspace.grid_remove()
         self.track_merger_workspace.grid_remove()
+        self.audio_training_workspace.grid_remove()
         
         # Show selected workspace
         if workspace_id == "audio_separation":
@@ -622,6 +636,9 @@ class VoiceRevolverApp:
         elif workspace_id == "track_merger":
             self.track_merger_workspace.grid()
             self.current_workspace = "track_merger"
+        elif workspace_id == "audio_training":
+            self.audio_training_workspace.grid()
+            self.current_workspace = "audio_training"
         else:
             self.vocal_changer_frame.grid()
             self.current_workspace = "vocal_changer"

@@ -2,6 +2,10 @@ import os
 import sys
 
 os.environ["USE_LIBUV"] = "0" if sys.platform == "win32" else "1"
+# Fix gloo backend on Windows - disable hostname resolution, use loopback
+if sys.platform == "win32":
+    os.environ["GLOO_SOCKET_IFNAME"] = "1"  # Loopback adapter index
+    os.environ["GLOO_SOCKET_FAMILY"] = "AF_INET"  # Force IPv4
 import datetime
 import glob
 import json
@@ -45,7 +49,11 @@ from rvc.lib.algorithm import commons
 from rvc.train.process.extract_model import extract_model
 
 # Parse command line arguments
-model_name = sys.argv[1]
+# First argument is now experiment_dir (full path) - derive model_name from parent dir 
+# Since logs_dir = temp_dir / "logs" and temp_dir ends with model_name
+experiment_dir = sys.argv[1]
+# Go up one level from "logs" to get the model name folder
+model_name = os.path.basename(os.path.dirname(experiment_dir.rstrip(os.sep)))
 save_every_epoch = int(sys.argv[2])
 total_epoch = int(sys.argv[3])
 pretrainG = sys.argv[4]
@@ -97,7 +105,7 @@ try:
 except (FileNotFoundError, json.JSONDecodeError, KeyError):
     train_dtype = torch.float32
 
-experiment_dir = os.path.join(current_dir, "logs", model_name)
+# experiment_dir is now passed as first command line argument
 config_save_path = os.path.join(experiment_dir, "config.json")
 dataset_path = os.path.join(experiment_dir, "sliced_audios")
 model_info_path = os.path.join(experiment_dir, "model_info.json")
@@ -170,7 +178,8 @@ def main():
     """
     global training_file_path, last_loss_gen_all, smoothed_loss_gen_history, loss_gen_history, loss_disc_history, smoothed_loss_disc_history, overtrain_save_epoch, gpus
 
-    os.environ["MASTER_ADDR"] = "localhost"
+    # Use 127.0.0.1 instead of localhost for Windows gloo compatibility
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(randint(20000, 55555))
     # Check sample rate
     wavs = glob.glob(
@@ -276,7 +285,7 @@ def main():
 
         # Clean up unnecessary files
         for root, dirs, files in os.walk(
-            os.path.join(now_dir, "logs", model_name), topdown=False
+            experiment_dir, topdown=False
         ):
             for name in files:
                 file_path = os.path.join(root, name)
@@ -339,12 +348,32 @@ def run(
     else:
         writer_eval = None
 
-    dist.init_process_group(
-        backend="gloo" if sys.platform == "win32" or device.type != "cuda" else "nccl",
-        init_method="env://",
-        world_size=n_gpus if device.type == "cuda" else 1,
-        rank=rank if device.type == "cuda" else 0,
-    )
+    # On Windows single-GPU, skip distributed training entirely (gloo has issues)
+    skip_distributed = (sys.platform == "win32" and n_gpus == 1)
+    
+    if skip_distributed:
+        # For single-GPU Windows, we don't need distributed training
+        # Just set rank to 0 and proceed
+        rank = 0
+    else:
+        # Use file-based init method for Windows compatibility
+        if sys.platform == "win32":
+            import tempfile
+            init_file = os.path.join(experiment_dir, "dist_init")
+            if os.path.exists(init_file):
+                os.remove(init_file)
+            init_method = f"file:///{init_file}"
+        else:
+            master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
+            master_port = os.environ.get("MASTER_PORT", "29500")
+            init_method = f"tcp://{master_addr}:{master_port}"
+        
+        dist.init_process_group(
+            backend="gloo" if sys.platform == "win32" or device.type != "cuda" else "nccl",
+            init_method=init_method,
+            world_size=n_gpus if device.type == "cuda" else 1,
+            rank=rank if device.type == "cuda" else 0,
+        )
 
     torch.manual_seed(config.train.seed)
 
@@ -553,17 +582,17 @@ def run(
 
     cache = []
     # collect the reference audio for tensorboard evaluation
-    if os.path.isfile(os.path.join("logs", "reference", embedder_name, "feats.npy")):
+    if os.path.isfile(os.path.join("temp", "reference", embedder_name, "feats.npy")):
         print("Using", embedder_name, "reference set for validation")
-        phone = np.load(os.path.join("logs", "reference", embedder_name, "feats.npy"))
+        phone = np.load(os.path.join("temp", "reference", embedder_name, "feats.npy"))
         # expanding x2 to match pitch size
         phone = np.repeat(phone, 2, axis=0)
         phone_lengths = torch.LongTensor([phone.shape[0]]).to(device)
         phone = torch.FloatTensor(phone).unsqueeze(0).to(device)
-        pitch = np.load(os.path.join("logs", "reference", "pitch_coarse.npy"))
+        pitch = np.load(os.path.join("temp", "reference", "pitch_coarse.npy"))
         # removed last frame to match features
         pitch = torch.LongTensor(pitch[:-1]).unsqueeze(0).to(device)
-        pitchf = np.load(os.path.join("logs", "reference", "pitch_fine.npy"))
+        pitchf = np.load(os.path.join("temp", "reference", "pitch_fine.npy"))
         # removed last frame to match features
         pitchf = torch.FloatTensor(pitchf[:-1]).unsqueeze(0).to(device)
         sid = torch.LongTensor([0]).to(device)
