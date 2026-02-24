@@ -27,6 +27,7 @@ MANIFEST
 *.manifest
 *.spec
 !voice_revolver.spec
+!installer.iss
 
 # ===========================
 # Virtual Environments
@@ -68,8 +69,10 @@ dist/
 build/
 build/windows/temp/
 build/mac/temp/
+build/installer/
 *.spec.cache
 *.exe
+!installer.iss
 *.msi
 *.dmg
 *.pkg
