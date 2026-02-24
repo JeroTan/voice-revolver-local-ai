@@ -117,6 +117,33 @@ class AudioTrainingWorkspace(ttk.Frame):
         self.progress_text_var.set(message)
         self.output_panel.update_progress(percent, message)
     
+    def _cleanup_temp_files(self, model_name: str):
+        """
+        Clean up temporary training files from previous training sessions.
+        Removes the entire temp directory for this model to ensure clean state.
+        
+        Args:
+            model_name: Name of the model being trained
+        """
+        try:
+            # Get temp directory path for this model
+            temp_dir = self.app_data_path / "temp" / "audio_training" / model_name
+            
+            if temp_dir.exists():
+                self._log(f"Cleaning up previous training files for: {model_name}")
+                
+                # Remove the entire temp directory
+                shutil.rmtree(temp_dir)
+                
+                self._log(f"Temp files cleaned successfully")
+            else:
+                self._log(f"No previous temp files to clean")
+                
+        except Exception as e:
+            # Log error but don't block training - cleanup is best-effort
+            logger.warning(f"Failed to clean temp files: {e}")
+            self._log(f"[WARNING] Could not clean all temp files: {e}")
+    
     def _on_train_clicked(self):
         """Handle Start Training button click."""
         if self.is_training:
@@ -146,6 +173,9 @@ class AudioTrainingWorkspace(ttk.Frame):
             )
             if not result:
                 return
+        
+        # Clean up previous training temp files for this model
+        self._cleanup_temp_files(model_name)
         
         # Start training in background thread
         self.is_training = True
@@ -233,7 +263,184 @@ class AudioTrainingWorkspace(ttk.Frame):
         self._update_progress(0, f"Error: {error[:50]}...")
         self._log(f"Training error: {error}")
         
-        messagebox.showerror("Training Failed", f"Training failed:\n\n{error}")
+        # Show user-friendly error dialog based on error type
+        self._show_error_dialog(error)
+    
+    def _show_error_dialog(self, error: str):
+        """
+        Show user-friendly error dialog based on error type.
+        Detects common errors and provides actionable solutions.
+        """
+        error_lower = error.lower()
+        
+        # Paging file / Virtual memory error
+        if "paging file is too small" in error_lower or "winerror 1455" in error_lower:
+            messagebox.showerror(
+                "Memory Error - System Configuration Needed",
+                "❌ Training failed due to insufficient virtual memory.\n\n"
+                "PROBLEM:\n"
+                "Windows doesn't have enough virtual memory (paging file) to load \n"
+                "PyTorch CUDA libraries for parallel processing.\n\n"
+                "SOLUTION:\n"
+                "1. Right-click 'This PC' → Properties\n"
+                "2. Advanced system settings → Performance Settings\n"
+                "3. Advanced tab → Virtual Memory → Change\n"
+                "4. Uncheck 'Automatically manage paging file'\n"
+                "5. Select your drive → Custom size:\n"
+                "   • Initial size: 16384 MB (16 GB)\n"
+                "   • Maximum size: 32768 MB (32 GB)\n"
+                "6. Click 'Set' → OK → Restart computer\n\n"
+                "ALTERNATIVE (Quick Fix):\n"
+                "• Close other programs to free up RAM\n"
+                "• Use CPU mode instead of GPU (slower but uses less memory)\n"
+                "• Reduce batch size in training parameters"
+            )
+        
+        # CUDA out of memory
+        elif "out of memory" in error_lower and ("cuda" in error_lower or "gpu" in error_lower):
+            messagebox.showerror(
+                "GPU Memory Error",
+                "❌ Training failed because GPU ran out of memory.\n\n"
+                "PROBLEM:\n"
+                "Your GPU doesn't have enough VRAM for the current batch size.\n\n"
+                "SOLUTIONS:\n"
+                "1. Reduce Batch Size (in Training Parameters):\n"
+                "   • Try Batch Size = 4 (or even 2)\n"
+                "   • Smaller batches = less GPU memory needed\n\n"
+                "2. Switch to CPU mode:\n"
+                "   • Device → Select 'CPU'\n"
+                "   • Slower but doesn't require GPU memory\n\n"
+                "3. Close other GPU applications:\n"
+                "   • Games, video editors, Chrome with hardware acceleration\n"
+                "   • Check Task Manager → Performance → GPU"
+            )
+        
+        # Missing venv-rvc environment
+        elif "venv-rvc" in error_lower and ("not found" in error_lower or "does not exist" in error_lower):
+            messagebox.showerror(
+                "Missing RVC Environment",
+                "❌ Training failed: RVC virtual environment not found.\n\n"
+                "PROBLEM:\n"
+                "The venv-rvc virtual environment is not installed.\n\n"
+                "SOLUTION:\n"
+                "Run the setup script:\n"
+                "1. Open PowerShell in the project folder\n"
+                "2. Run: .\\setup_venv_rvc.bat\n"
+                "   (or manually create venv-rvc with RVC dependencies)\n\n"
+                "This environment is required for RVC training."
+            )
+        
+        # File access / permission errors
+        elif "permission denied" in error_lower or "access is denied" in error_lower:
+            messagebox.showerror(
+                "File Access Error",
+                "❌ Training failed due to file permission error.\n\n"
+                "PROBLEM:\n"
+                "Cannot access required files or directories.\n\n"
+                "SOLUTIONS:\n"
+                "1. Close any programs using the audio files:\n"
+                "   • Media players, audio editors, file explorers\n\n"
+                "2. Run the app as Administrator:\n"
+                "   • Right-click .exe → Run as administrator\n\n"
+                "3. Check file permissions:\n"
+                "   • Make sure you own the files/folders\n"
+                "   • Check antivirus isn't blocking access"
+            )
+        
+        # Audio file format errors
+        elif "audio" in error_lower and ("format" in error_lower or "decode" in error_lower or "corrupt" in error_lower):
+            messagebox.showerror(
+                "Audio File Error",
+                "❌ Training failed: Problem with audio files.\n\n"
+                "PROBLEM:\n"
+                "One or more audio files are corrupted or unsupported.\n\n"
+                "SOLUTIONS:\n"
+                "1. Check audio files:\n"
+                "   • Make sure all files are valid audio\n"
+                "   • Use WAV, MP3, FLAC, or OGG formats\n"
+                "   • Remove any corrupted files\n\n"
+                "2. Re-convert files:\n"
+                "   • Use Audacity or FFmpeg to convert to WAV\n"
+                "   • 16-bit, 44100 Hz recommended\n\n"
+                "3. Check file size:\n"
+                "   • Files should be > 1 second duration\n"
+                "   • Not empty or 0 bytes"
+            )
+        
+        # Generic preprocessing errors
+        elif "preprocess" in error_lower:
+            messagebox.showerror(
+                "Preprocessing Error",
+                "❌ Training failed during audio preprocessing.\n\n"
+                "PROBLEM:\n"
+                "Failed to prepare audio files for training.\n\n"
+                "COMMON CAUSES & SOLUTIONS:\n"
+                "1. Memory issues → See 'Memory Error' solution above\n\n"
+                "2. Invalid audio files:\n"
+                "   • Check all files can play in media player\n"
+                "   • Remove silent or corrupted files\n\n"
+                "3. Path too long:\n"
+                "   • Move files to shorter path (e.g., C:\\audio\\)\n\n"
+                "4. Special characters in filenames:\n"
+                "   • Rename files to use only letters/numbers\n\n"
+                "Full error (check logs for details):\n" + error[:200]
+            )
+        
+        # Generic extraction errors
+        elif "extract" in error_lower and ("feature" in error_lower or "f0" in error_lower):
+            messagebox.showerror(
+                "Feature Extraction Error",
+                "❌ Training failed during feature extraction.\n\n"
+                "PROBLEM:\n"
+                "Failed to extract pitch (F0) or audio features.\n\n"
+                "SOLUTIONS:\n"
+                "1. Check GPU/CPU memory:\n"
+                "   • If GPU error → switch to CPU mode\n"
+                "   • If memory error → increase virtual memory\n\n"
+                "2. Verify audio quality:\n"
+                "   • Files should be clean vocals\n"
+                "   • No extreme distortion or clipping\n\n"
+                "3. Try different sample rate:\n"
+                "   • 40000 Hz (default) or 48000 Hz\n\n"
+                f"Error details:\n{error[:200]}"
+            )
+        
+        # Training step errors
+        elif "train" in error_lower and "epoch" in error_lower:
+            messagebox.showerror(
+                "Training Step Error",
+                "❌ Training failed during model training.\n\n"
+                "PROBLEM:\n"
+                "Error occurred while training the neural network.\n\n"
+                "SOLUTIONS:\n"
+                "1. Reduce batch size:\n"
+                "   • Try Batch Size = 4 or 2\n\n"
+                "2. Lower epochs:\n"
+                "   • Try 200-300 epochs instead of 400+\n\n"
+                "3. Check disk space:\n"
+                "   • Training creates large checkpoint files\n"
+                "   • Need 5-10 GB free space\n\n"
+                "4. GPU/Memory issues:\n"
+                "   • See solutions above\n\n"
+                f"Error details:\n{error[:200]}"
+            )
+        
+        # Fallback for unknown errors
+        else:
+            messagebox.showerror(
+                "Training Failed",
+                f"❌ Training failed with an error.\n\n"
+                f"ERROR MESSAGE:\n{error[:300]}\n\n"
+                "GENERAL TROUBLESHOOTING:\n"
+                "1. Check the error message above for clues\n"
+                "2. Try closing other programs to free memory\n"
+                "3. Switch from GPU to CPU if GPU error\n"
+                "4. Reduce batch size in Training Parameters\n"
+                "5. Check logs panel for full error details\n"
+                "6. Restart the application\n\n"
+                "If the problem persists, copy the error message and\n"
+                "report it on GitHub Issues."
+            )
     
     def _on_training_cancelled(self):
         """Handle training cancellation."""

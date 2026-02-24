@@ -17,28 +17,23 @@ import sys
 from pathlib import Path
 from typing import Optional, Callable
 
+from .venv_utils import get_venv_python as get_venv_python_util
+
 logger = logging.getLogger(__name__)
 
 
 def get_venv_python() -> Optional[Path]:
     """
     Get the Python executable path for venv-enhance.
+    Wrapper around venv_utils for backwards compatibility.
     
     Returns:
         Path to Python executable in venv-enhance, or None if not found
     """
-    # Assume venv-enhance is in the project root (same level as .venv-1)
-    project_root = Path(__file__).parent.parent.parent
-    venv_paths = [
-        project_root / "venv-enhance" / "Scripts" / "python.exe",  # Windows
-        project_root / "venv-enhance" / "bin" / "python"          # Linux/Mac
-    ]
-    
-    for venv_python in venv_paths:
-        if venv_python.exists():
-            return venv_python
-    
-    return None
+    try:
+        return get_venv_python_util('venv-enhance')
+    except (FileNotFoundError, RuntimeError):
+        return None
 
 
 def enhance_vocals(

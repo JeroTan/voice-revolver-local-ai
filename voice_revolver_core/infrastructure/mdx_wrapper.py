@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Callable
 import shutil
 
+from .venv_utils import get_venv_python
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,17 +44,10 @@ class MDXWrapper:
         """
         try:
             # Find venv-mdx Python executable
-            project_root = Path(__file__).parent.parent.parent
-            mdx_python = project_root / "venv-mdx" / "Scripts" / "python.exe"
-            
-            if not mdx_python.exists():
-                error_msg = (
-                    "venv-mdx environment not found. To use MDX:\n"
-                    "  python -m venv venv-mdx\n"
-                    "  .\\venv-mdx\\Scripts\\Activate.ps1\n"
-                    "  pip install audio-separator[cpu]\n"
-                    "\nOr select 'demucs' for stem separation."
-                )
+            try:
+                mdx_python = get_venv_python('venv-mdx')
+            except (FileNotFoundError, RuntimeError) as e:
+                error_msg = str(e) + "\n\nOr select 'demucs' for stem separation."
                 logger.warning(error_msg)
                 return False, error_msg
             
@@ -100,8 +95,7 @@ class MDXWrapper:
                 progress_callback(5, "Calling MDX subprocess...")
             
             # Find MDX Python executable and standalone script
-            project_root = Path(__file__).parent.parent.parent
-            mdx_python = project_root / "venv-mdx" / "Scripts" / "python.exe"
+            mdx_python = get_venv_python('venv-mdx')
             mdx_script = Path(__file__).parent / "mdx_standalone.py"
             
             # Run MDX subprocess

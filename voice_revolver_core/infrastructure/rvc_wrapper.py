@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import sys
 
+from .venv_utils import get_venv_python
+
 logger = logging.getLogger(__name__)
 
 
@@ -199,19 +201,11 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
             
             # Path to RVC Python executable (dedicated venv-rvc environment)
             # This environment has RVC dependencies with numpy 1.23.5, isolated from main app
-            project_root = Path(__file__).parent.parent.parent
-            rvc_python = project_root / "venv-rvc" / "Scripts" / "python.exe"
-            
-            if not rvc_python.exists():
-                error_msg = (
-                    "RVC environment not found. Please run:\n"
-                    "  py -3.11 -m venv venv-rvc\n"
-                    "  .\\venv-rvc\\Scripts\\python.exe -m pip install numpy==1.23.5 scipy==1.10.1\n"
-                    "  .\\venv-rvc\\Scripts\\python.exe -m pip install rvc-python praat-parselmouth pyworld soundfile\n"
-                    "  .\\venv-rvc\\Scripts\\python.exe -m pip install faiss-gpu  # GPU-accelerated (or faiss-cpu for CPU-only)"
-                )
-                logger.error(error_msg)
-                return None, error_msg
+            try:
+                rvc_python = get_venv_python('venv-rvc')
+            except (FileNotFoundError, RuntimeError) as e:
+                logger.error(str(e))
+                return None, str(e)
             
             # Call RVC via subprocess using dedicated venv-rvc Python with ALL parameters
             import subprocess

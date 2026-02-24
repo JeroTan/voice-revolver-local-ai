@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Callable
 from datetime import datetime
 
+from .venv_utils import get_venv_python
+
 try:
     from pydub import AudioSegment
     PYDUB_AVAILABLE = True
@@ -58,8 +60,8 @@ class RVCTrainingWrapper:
         # Use temp directory for RVC logs/training artifacts (not project root)
         self.logs_dir = self.temp_dir / "logs"
         
-        # RVC Python executable
-        self.rvc_python = self.project_root / "venv-rvc" / "Scripts" / "python.exe"
+        # RVC Python executable (works in both dev and .exe modes)
+        self.rvc_python = get_venv_python('venv-rvc')
         
         # Training state
         self.process: Optional[subprocess.Popen] = None
@@ -67,15 +69,13 @@ class RVCTrainingWrapper:
     
     def _check_environment(self) -> Tuple[bool, Optional[str]]:
         """Check if RVC environment is available."""
-        if not self.rvc_python.exists():
-            error_msg = (
-                "RVC environment not found. Please run:\n"
-                "  py -3.11 -m venv venv-rvc\n"
-                "  .\\venv-rvc\\Scripts\\python.exe -m pip install numpy==1.23.5 scipy==1.10.1\n"
-                "  .\\venv-rvc\\Scripts\\python.exe -m pip install rvc-python praat-parselmouth pyworld\n"
-            )
-            return False, error_msg
-        return True, None
+        try:
+            # Verify venv exists and is accessible
+            if not self.rvc_python.exists():
+                return False, f"RVC Python executable not found: {self.rvc_python}"
+            return True, None
+        except Exception as e:
+            return False, str(e)
     
     def _prepare_input_audio(
         self,

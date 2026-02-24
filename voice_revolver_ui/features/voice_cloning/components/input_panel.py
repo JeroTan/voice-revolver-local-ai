@@ -280,29 +280,24 @@ class InputPanel(ttk.Frame):
         rms_desc.grid(row=param_row, column=0, sticky=tk.W, padx=(15, 0), pady=(0, 5))
         param_row += 1
         
-        # Button frame for Start Processing and Reset All buttons
-        params_button_frame = ttk.Frame(self.rvc_params_frame)
-        params_button_frame.grid(row=param_row, column=0, sticky=(tk.W, tk.E), pady=(10, 5))
-        params_button_frame.columnconfigure(0, weight=1)
-        params_button_frame.columnconfigure(1, weight=1)
+        # Reset All button for RVC parameters
+        self.reset_all_btn = ttk.Button(
+            self.rvc_params_frame,
+            text="Reset All to Defaults",
+            command=self._reset_rvc_params
+        )
+        self.reset_all_btn.grid(row=param_row, column=0, sticky=(tk.W, tk.E), pady=(10, 5))
+        param_row += 1
         
-        # Start Processing button (left)
+        # Start Processing button (at bottom of Referencing section, outside RVC params)
         self.process_btn = ttk.Button(
-            params_button_frame,
+            ref_frame,
             text="Start Processing",
             command=self._on_process_clicked,
             style='Accent.TButton'
         )
-        self.process_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
-        
-        # Reset All button (right)
-        self.reset_all_btn = ttk.Button(
-            params_button_frame,
-            text="Reset All to Defaults",
-            command=self._reset_rvc_params
-        )
-        self.reset_all_btn.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
-        param_row += 1
+        self.process_btn.grid(row=ref_row, column=0, sticky=(tk.W, tk.E), pady=(10, 5))
+        ref_row += 1
         
         # Separator
         ttk.Separator(ref_frame, orient=tk.HORIZONTAL).grid(
