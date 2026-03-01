@@ -85,6 +85,14 @@ class VoiceConversionParams:
     # Stem separation model selection
     separation_model: str = "demucs"  # "demucs" or "mdx" - MDX has better vocal isolation
     
+    # RVC-specific parameters (used when reference_mode == "model")
+    f0_method: str = "rmvpe"  # Pitch extraction: "rmvpe", "harvest", "crepe", "pm"
+    rvc_pitch_shift: int = 0  # RVC pitch shift (-12 to +12 semitones)
+    index_rate: float = 0.75  # Feature retrieval strength (0.0-1.0)
+    filter_radius: int = 3  # Median filtering for pitch curve (0-7)
+    rms_mix_rate: float = 0.25  # Volume envelope mixing (0.0-1.0)
+    protect: float = 0.33  # Consonant protection (0.0-0.5)
+    
     # Phase 2: Spectrum editor curves (optional)
     editing_curves: Optional[Dict[str, Any]] = None  # Contains pitch, reverb, volume curves
 

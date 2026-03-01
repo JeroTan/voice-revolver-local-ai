@@ -53,6 +53,7 @@ from voice_revolver_ui.features.voice_cloning import VoiceCloningWorkspace
 from voice_revolver_ui.features.voice_enhancement import VoiceEnhancementWorkspace
 from voice_revolver_ui.features.track_merger import TrackMergerWorkspace
 from voice_revolver_ui.features.audio_training import AudioTrainingWorkspace
+from voice_revolver_ui.components.labeled_slider import LabeledSlider
 
 logger = logging.getLogger(__name__)
 
@@ -108,11 +109,13 @@ class VoiceRevolverApp:
         self.vocals_converted_path = None
         self.final_mix_path = None
         self.instrumental_path = None
+        self.edited_vocals_path = None  # Path to vocals after spectrum editor edits
         
-        # Audio preview states (6 separate players)
+        # Audio preview states (7 separate players - added original_vocals_edited)
         self.preview_states = {
             'original': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
             'original_vocals': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
+            'original_vocals_edited': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
             'reference_denoised': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
             'vocals': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
             'final': {'loaded': False, 'playing': False, 'length': 0, 'timer': None},
@@ -372,6 +375,165 @@ class VoiceRevolverApp:
                        value="model", command=self._on_reference_mode_change, state="disabled")
         self.ref_model_radio.pack(side=tk.LEFT, padx=5)
         
+        # RVC Parameters (shown only when RVC model mode is selected)
+        ref_row += 1
+        self.rvc_params_frame = ttk.LabelFrame(left_bottom_frame, text="RVC Parameters", padding=10)
+        self.rvc_params_frame.grid(row=ref_row, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 5))
+        self.rvc_params_frame.columnconfigure(0, weight=1)
+        self.rvc_params_frame.grid_remove()  # Hidden by default
+        
+        param_row = 0
+        
+        # F0 Method dropdown
+        f0_frame = ttk.Frame(self.rvc_params_frame)
+        f0_frame.grid(row=param_row, column=0, sticky=(tk.W, tk.E), pady=3)
+        f0_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(f0_frame, text="F0 Method:", width=15).grid(row=0, column=0, sticky=tk.W)
+        self.f0_method_var = tk.StringVar(value="rmvpe")
+        self.f0_method_combo = ttk.Combobox(
+            f0_frame,
+            textvariable=self.f0_method_var,
+            values=["rmvpe", "harvest", "crepe", "pm"],
+            state="readonly",
+            width=12
+        )
+        self.f0_method_combo.grid(row=0, column=1, sticky=tk.W, padx=5)
+        param_row += 1
+        
+        # F0 Method description
+        f0_desc = ttk.Label(
+            self.rvc_params_frame,
+            text="Pitch extraction algorithm (rmvpe=best quality, harvest=stable, crepe=accurate)",
+            font=("Segoe UI", 8),
+            foreground="gray"
+        )
+        f0_desc.grid(row=param_row, column=0, sticky=tk.W, padx=(15, 0), pady=(0, 5))
+        param_row += 1
+        
+        # Pitch Shift slider
+        self.pitch_shift_slider = LabeledSlider(
+            self.rvc_params_frame,
+            label="Pitch Shift:",
+            from_=-12,
+            to=12,
+            initial_value=0,
+            value_format="{:.0f}",
+            length=200
+        )
+        self.pitch_shift_slider.grid(row=param_row, column=0, sticky=(tk.W, tk.E), pady=3)
+        param_row += 1
+        
+        # Pitch Shift description
+        pitch_desc = ttk.Label(
+            self.rvc_params_frame,
+            text="Shift pitch up/down in semitones (-12 to +12)",
+            font=("Segoe UI", 8),
+            foreground="gray"
+        )
+        pitch_desc.grid(row=param_row, column=0, sticky=tk.W, padx=(15, 0), pady=(0, 5))
+        param_row += 1
+        
+        # Index Rate slider
+        self.index_rate_slider = LabeledSlider(
+            self.rvc_params_frame,
+            label="Index Rate:",
+            from_=0.0,
+            to=1.0,
+            initial_value=0.75,
+            value_format="{:.2f}",
+            length=200
+        )
+        self.index_rate_slider.grid(row=param_row, column=0, sticky=(tk.W, tk.E), pady=3)
+        param_row += 1
+        
+        # Index Rate description
+        index_desc = ttk.Label(
+            self.rvc_params_frame,
+            text="Feature retrieval strength (higher=better timbre match, 0.75 recommended)",
+            font=("Segoe UI", 8),
+            foreground="gray"
+        )
+        index_desc.grid(row=param_row, column=0, sticky=tk.W, padx=(15, 0), pady=(0, 5))
+        param_row += 1
+        
+        # Protection slider
+        self.protection_slider = LabeledSlider(
+            self.rvc_params_frame,
+            label="Protection:",
+            from_=0.0,
+            to=0.5,
+            initial_value=0.33,
+            value_format="{:.2f}",
+            length=200
+        )
+        self.protection_slider.grid(row=param_row, column=0, sticky=(tk.W, tk.E), pady=3)
+        param_row += 1
+        
+        # Protection description
+        protection_desc = ttk.Label(
+            self.rvc_params_frame,
+            text="Protect voiceless consonants (s, t, k sounds - prevents over-smoothing)",
+            font=("Segoe UI", 8),
+            foreground="gray"
+        )
+        protection_desc.grid(row=param_row, column=0, sticky=tk.W, padx=(15, 0), pady=(0, 5))
+        param_row += 1
+        
+        # Filter Radius slider
+        self.filter_radius_slider = LabeledSlider(
+            self.rvc_params_frame,
+            label="Filter Radius:",
+            from_=0,
+            to=7,
+            initial_value=3,
+            value_format="{:.0f}",
+            length=200
+        )
+        self.filter_radius_slider.grid(row=param_row, column=0, sticky=(tk.W, tk.E), pady=3)
+        param_row += 1
+        
+        # Filter Radius description
+        filter_desc = ttk.Label(
+            self.rvc_params_frame,
+            text="Median filtering for pitch curve (higher=smoother, 3 recommended)",
+            font=("Segoe UI", 8),
+            foreground="gray"
+        )
+        filter_desc.grid(row=param_row, column=0, sticky=tk.W, padx=(15, 0), pady=(0, 5))
+        param_row += 1
+        
+        # RMS Mix Rate slider
+        self.rms_mix_rate_slider = LabeledSlider(
+            self.rvc_params_frame,
+            label="RMS Mix Rate:",
+            from_=0.0,
+            to=1.0,
+            initial_value=0.25,
+            value_format="{:.2f}",
+            length=200
+        )
+        self.rms_mix_rate_slider.grid(row=param_row, column=0, sticky=(tk.W, tk.E), pady=3)
+        param_row += 1
+        
+        # RMS Mix Rate description
+        rms_desc = ttk.Label(
+            self.rvc_params_frame,
+            text="Volume envelope mix (0=use original volume, 1=use model volume)",
+            font=("Segoe UI", 8),
+            foreground="gray"
+        )
+        rms_desc.grid(row=param_row, column=0, sticky=tk.W, padx=(15, 0), pady=(0, 5))
+        param_row += 1
+        
+        # Reset to Defaults button
+        reset_btn = ttk.Button(
+            self.rvc_params_frame,
+            text="Reset All to Defaults",
+            command=self._reset_rvc_params
+        )
+        reset_btn.grid(row=param_row, column=0, sticky=tk.W, pady=(10, 0))
+        
         # Output format
         ref_row += 1
         ttk.Label(left_bottom_frame, text="Output Format:").grid(row=ref_row, column=0, sticky=tk.W, pady=5)
@@ -448,6 +610,7 @@ class VoiceRevolverApp:
         preview_configs = [
             ('original', 'Original Audio'),
             ('original_vocals', 'Original Vocals'),
+            ('original_vocals_edited', 'Original Vocal (Edited)'),
             ('reference_denoised', 'Reference (Cleaned)'),
             ('vocals', 'Converted Vocals'),
             ('final', 'Final Mix'),
@@ -891,6 +1054,12 @@ class VoiceRevolverApp:
             self.separation_complete = True
             self.processing = False
             
+            # Clear edited vocals path (no edits yet) and disable edited vocals preview
+            self.edited_vocals_path = None
+            if 'original_vocals_edited' in self.preview_controls:
+                self.preview_controls['original_vocals_edited']['play_btn'].config(state="disabled")
+                self.preview_controls['original_vocals_edited']['stop_btn'].config(state="disabled")
+            
             # Enable spectrum editor
             self._enable_spectrum_editor(True)
             
@@ -944,7 +1113,10 @@ class VoiceRevolverApp:
         messagebox.showerror("Separation Failed", error_msg)
     
     def _apply_curve_changes(self):
-        """Apply pitch/volume/reverb curve edits to the separated vocals"""
+        """Apply pitch/volume/reverb curve edits to the separated vocals
+        
+        Useful when user removes all pre-populated points to reset
+        """
         if not hasattr(self, 'original_vocals_path') or not self.original_vocals_path:
             self.log("[WARNING] No separated vocals available. Run separation first.")
             return
@@ -953,7 +1125,6 @@ class VoiceRevolverApp:
         curves = self.spectrum_editor.get_all_curves()
         
         # Note: We allow Apply Changes even with 0 points - this reloads original vocals
-        # Useful when user removes all pre-populated points to reset
         
         self.log("=" * 50)
         self.log("Applying curve changes to preview...")
@@ -1138,6 +1309,12 @@ class VoiceRevolverApp:
     def _curves_applied_callback(self, processed_audio_path, instrumental_preview_path=None):
         """UI callback when curves are successfully applied"""
         try:
+            # Store edited vocals path and enable preview button
+            self.edited_vocals_path = processed_audio_path
+            if 'original_vocals_edited' in self.preview_controls:
+                self.preview_controls['original_vocals_edited']['play_btn'].config(state="normal")
+                self.preview_controls['original_vocals_edited']['stop_btn'].config(state="normal")
+            
             # Reload processed audio WITHOUT resetting curves
             self.spectrum_editor.reload_audio_only(processed_audio_path)
             
@@ -1323,6 +1500,16 @@ class VoiceRevolverApp:
         status = "enabled" if enabled else "disabled"
         self.log(f"Gender alignment {status}")
     
+    def _reset_rvc_params(self):
+        """Reset all RVC parameters to default values"""
+        self.f0_method_var.set("rmvpe")
+        self.pitch_shift_slider.set(0)
+        self.index_rate_slider.set(0.75)
+        self.protection_slider.set(0.33)
+        self.filter_radius_slider.set(3)
+        self.rms_mix_rate_slider.set(0.25)
+        self.log("RVC parameters reset to defaults")
+    
     def _on_reference_mode_change(self):
         """Handle reference mode toggle between audio and model"""
         mode = self.reference_mode.get()
@@ -1331,6 +1518,12 @@ class VoiceRevolverApp:
         self.reference_file = None
         self.reference_label.config(text="No file selected", foreground="gray")
         self.log(f"Reference mode changed to: {mode.upper()}")
+        
+        # Show/hide RVC parameters based on mode
+        if mode == "model":
+            self.rvc_params_frame.grid()  # Show RVC parameters
+        else:
+            self.rvc_params_frame.grid_remove()  # Hide RVC parameters
         
         # Show/hide gender selector based on mode AND gender alignment checkbox
         gender_enabled = self.use_gender_alignment_var.get()
@@ -1564,6 +1757,16 @@ class VoiceRevolverApp:
             # Get editing curves from instance variable (set in _start_processing)
             editing_curves = self.editing_curves if hasattr(self, 'editing_curves') else None
             
+            # Get RVC parameters (will be used only when reference_mode == "model")
+            rvc_params = {
+                'f0_method': self.f0_method_var.get(),
+                'rvc_pitch_shift': int(self.pitch_shift_slider.get()),
+                'index_rate': self.index_rate_slider.get(),
+                'filter_radius': int(self.filter_radius_slider.get()),
+                'rms_mix_rate': self.rms_mix_rate_slider.get(),
+                'protect': self.protection_slider.get()
+            }
+            
             # Create voice params
             # NOTE: style and tau are ignored by ChatterBox (only used by OpenVoice)
             voice_params = VoiceConversionParams(
@@ -1580,7 +1783,8 @@ class VoiceRevolverApp:
                 threshold_mid=self.threshold_mid_var.get(),  # Pitch shift sensitivity - mid
                 threshold_high=self.threshold_high_var.get(),  # Pitch shift sensitivity - high
                 separation_model=separation_model,  # "demucs" (balanced) or "mdx" (best vocals)
-                editing_curves=editing_curves  # Phase 2: User editing curves from spectrum editor
+                editing_curves=editing_curves,  # Phase 2: User editing curves from spectrum editor
+                **rvc_params  # RVC-specific parameters
             )
             
             # Progress callback - receives (percentage, stage) args
@@ -2008,6 +2212,7 @@ class VoiceRevolverApp:
         paths = {
             'original': self.original_audio_path,
             'original_vocals': self.original_vocals_path,
+            'original_vocals_edited': self.edited_vocals_path,
             'reference_denoised': self.reference_denoised_path,
             'vocals': self.vocals_converted_path,
             'final': self.final_mix_path,
@@ -2026,6 +2231,7 @@ class VoiceRevolverApp:
         track_names = {
             'original': 'original',
             'original_vocals': 'original_vocals',
+            'original_vocals_edited': 'original_vocals_edited',
             'reference_denoised': 'reference_denoised',
             'vocals': 'vocals_converted',
             'final': 'final_mix',

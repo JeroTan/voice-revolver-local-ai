@@ -577,13 +577,13 @@ class VoiceReplacementService:
                 result_path, error = self._rvc_wrapper.convert_voice(
                     source_audio_path=vocal_to_convert,  # Use pitch-shifted vocal if available
                     output_path=output_path,
-                    f0_method="rmvpe",  # Best quality pitch detection
+                    f0_method=params.f0_method,  # User-selected pitch detection method
                     f0_up_key=rvc_pitch_shift,  # 0 if already shifted, otherwise apply shift
-                    index_rate=0.75,  # Retrieval index influence
-                    filter_radius=3,  # Pitch smoothing
+                    index_rate=params.index_rate,  # User-configured retrieval index influence
+                    filter_radius=params.filter_radius,  # User-configured pitch smoothing
                     resample_sr=0,  # Keep original sample rate
-                    rms_mix_rate=0.25,  # Envelope mixing
-                    protect=0.33  # Consonant protection
+                    rms_mix_rate=params.rms_mix_rate,  # User-configured envelope mixing
+                    protect=params.protect  # User-configured consonant protection
                 )
                 
                 # Unload model after conversion to free resources
