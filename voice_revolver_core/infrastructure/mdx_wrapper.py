@@ -117,24 +117,27 @@ class MDXWrapper:
                 command,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=1800  # 30 minutes max (MDX is slow on CPU)
             )
             
             # Log subprocess output
-            if result.stderr:
-                for line in result.stderr.strip().split('\n'):
+            stderr_text = result.stderr or ""
+            if stderr_text:
+                for line in stderr_text.strip().split('\n'):
                     if line:
                         logger.info(f"MDX: {line}")
             
             if result.returncode != 0:
                 error_msg = f"MDX subprocess failed with code {result.returncode}"
-                if result.stderr:
-                    error_msg += f"\n{result.stderr}"
+                if stderr_text:
+                    error_msg += f"\n{stderr_text}"
                 logger.error(error_msg)
                 return None, error_msg
             
             # Handle timeout
-            if "timed out" in result.stderr.lower():
+            if "timed out" in stderr_text.lower():
                 logger.error("MDX processing is very slow on CPU. Consider using Demucs or GPU acceleration.")
             
             # Parse JSON result

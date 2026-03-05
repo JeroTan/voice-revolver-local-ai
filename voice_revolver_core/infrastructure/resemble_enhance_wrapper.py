@@ -111,41 +111,64 @@ def enhance_vocals(
         
         # Build command to run our helper script in venv-enhance
         # This script uses the Python API directly instead of the broken CLI
-        cmd = [
-            str(venv_python),
-            str(script_path),
-            input_str,
-            output_str,
-            "--solver", solver,
-            "--nfe", str(nfe),
-            "--tau", str(temperature),  # Note: API uses 'tau' not 'temp'
-            "--device", "cuda"
-        ]
+        def _build_cmd(device: str):
+            c = [
+                str(venv_python),
+                str(script_path),
+                input_str,
+                output_str,
+                "--solver", solver,
+                "--nfe", str(nfe),
+                "--tau", str(temperature),  # Note: API uses 'tau' not 'temp'
+                "--device", device
+            ]
+            if denoise_first:
+                c.append("--denoise")
+            return c
         
-        if denoise_first:
-            cmd.append("--denoise")
+        cmd = _build_cmd("cuda")
         
         logger.info(f"Running command: {' '.join(cmd)}")
         
         if progress_callback:
-            progress_callback(10, "Enhancement running (this may take a few minutes)...")
+            progress_callback(10, "Enhancement running on GPU (this may take a few minutes)...")
         
         # Run enhancement in subprocess
         process = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=600  # 10 minute timeout
         )
         
-        # Check for errors
+        # Check for CUDA/GPU errors - return special status to let UI ask user
         if process.returncode != 0:
-            logger.error(f"Enhancement failed with return code {process.returncode}")
-            logger.error(f"STDOUT: {process.stdout}")
-            logger.error(f"STDERR: {process.stderr}")
-            if progress_callback:
-                progress_callback(100, f"❌ Enhancement failed: {process.stderr[:100]}")
-            return False
+            stderr_text = process.stderr or ""
+            cuda_error_keywords = [
+                "GET was unable to find an engine",
+                "CUDA error",
+                "CUDA out of memory",
+                "cudnn",
+                "cuDNN",
+                "CUBLAS_STATUS",
+            ]
+            is_cuda_error = any(kw.lower() in stderr_text.lower() for kw in cuda_error_keywords)
+            
+            if is_cuda_error:
+                logger.warning(f"CUDA enhancement failed: {stderr_text[-200:]}")
+                if progress_callback:
+                    progress_callback(0, "⚠ GPU enhancement failed")
+                return "cuda_failed"  # Special return value for CUDA failure
+            else:
+                # Non-CUDA error, don't offer retry
+                logger.error(f"Enhancement failed with return code {process.returncode}")
+                logger.error(f"STDOUT: {process.stdout}")
+                logger.error(f"STDERR: {process.stderr}")
+                if progress_callback:
+                    progress_callback(100, f"❌ Enhancement failed: {stderr_text[:100]}")
+                return False
         
         # Log output
         if process.stdout:
@@ -179,6 +202,89 @@ def enhance_vocals(
         
     except Exception as e:
         logger.error(f"Enhancement failed with error: {e}", exc_info=True)
+        if progress_callback:
+            progress_callback(100, f"❌ Enhancement failed: {e}")
+        return False
+
+
+def enhance_vocals_cpu(
+    input_path: Path,
+    output_path: Path,
+    solver: str = "rk4",
+    nfe: int = 100,
+    temperature: float = 0.33,
+    denoise_first: bool = False,
+    progress_callback: Optional[Callable[[str], None]] = None
+) -> bool:
+    """
+    Run vocal enhancement on CPU. Called as fallback when GPU fails and user agrees.
+    
+    Returns:
+        bool: True if enhancement succeeded, False otherwise
+    """
+    try:
+        venv_python = get_venv_python()
+        if not venv_python:
+            return False
+        
+        input_path = Path(input_path) if isinstance(input_path, str) else input_path
+        output_path = Path(output_path) if isinstance(output_path, str) else output_path
+        
+        input_str = str(input_path.resolve())
+        output_str = str(output_path.resolve())
+        script_path = Path(__file__).parent / "enhance_single_file.py"
+        
+        cmd = [
+            str(venv_python),
+            str(script_path),
+            input_str,
+            output_str,
+            "--solver", solver,
+            "--nfe", str(nfe),
+            "--tau", str(temperature),
+            "--device", "cpu"
+        ]
+        if denoise_first:
+            cmd.append("--denoise")
+        
+        logger.info(f"Running CPU enhancement: {' '.join(cmd)}")
+        
+        if progress_callback:
+            progress_callback(10, "Enhancement running on CPU (this will be slower)...")
+        
+        process = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1800  # 30 minute timeout for CPU
+        )
+        
+        if process.returncode != 0:
+            logger.error(f"CPU enhancement failed: {process.stderr}")
+            if progress_callback:
+                progress_callback(100, "❌ Enhancement failed on CPU")
+            return False
+        
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            logger.error(f"CPU enhancement produced no output")
+            if progress_callback:
+                progress_callback(100, "❌ Enhancement failed: no output")
+            return False
+        
+        logger.info(f"CPU enhancement complete: {output_path}")
+        if progress_callback:
+            progress_callback(100, "✓ Vocal enhancement complete (CPU)")
+        return True
+        
+    except subprocess.TimeoutExpired:
+        logger.error("CPU enhancement timed out after 30 minutes")
+        if progress_callback:
+            progress_callback(100, "❌ Enhancement timed out on CPU")
+        return False
+    except Exception as e:
+        logger.error(f"CPU enhancement error: {e}", exc_info=True)
         if progress_callback:
             progress_callback(100, f"❌ Enhancement failed: {e}")
         return False

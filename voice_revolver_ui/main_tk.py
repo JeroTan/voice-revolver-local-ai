@@ -1002,15 +1002,62 @@ class VoiceRevolverApp:
                             progress_callback=enhance_progress_cb
                         )
                         
-                        if success and enhanced_vocals_path.exists():
+                        # Handle CUDA failure - ask user if they want to retry on CPU
+                        if success == "cuda_failed":
+                            import threading
+                            user_choice = [None]  # Use list to pass by reference
+                            event = threading.Event()
+                            
+                            def ask_user():
+                                result = messagebox.askyesno(
+                                    "GPU Enhancement Failed",
+                                    "Vocal enhancement failed on GPU (CUDA error).\n\n"
+                                    "Would you like to retry on CPU?\n"
+                                    "(This will be significantly slower but should work)\n\n"
+                                    "If you choose No, processing will continue\n"
+                                    "without vocal enhancement (no Blend mode)."
+                                )
+                                user_choice[0] = result
+                                event.set()
+                            
+                            self.root.after(0, ask_user)
+                            event.wait()  # Wait for user response
+                            
+                            if user_choice[0]:  # User said Yes
+                                self.root.after(0, self.log, "→ Retrying enhancement on CPU (this will be slower)...")
+                                progress_cb(76, "Retrying enhancement on CPU...")
+                                
+                                from voice_revolver_core.infrastructure.resemble_enhance_wrapper import enhance_vocals_cpu
+                                success = enhance_vocals_cpu(
+                                    input_path=str(stems.vocals),
+                                    output_path=str(enhanced_vocals_path),
+                                    solver="rk4",
+                                    nfe=100,
+                                    temperature=0.33,
+                                    denoise_first=False,
+                                    progress_callback=enhance_progress_cb
+                                )
+                            else:  # User said No
+                                self.root.after(0, self.log, "→ Skipping vocal enhancement (user declined CPU retry)")
+                                success = False
+                        
+                        if success is True and enhanced_vocals_path.exists():
                             self.log(f"[OK] Vocal enhancement complete: {enhanced_vocals_path.name}")
                         else:
-                            self.log("[WARNING] Enhancement failed, using original vocals")
+                            if success != False:  # Don't double-log if user already declined
+                                self.log("[WARNING] Enhancement failed")
+                            self.log("Blend mode will not be available. Continuing with original vocals.")
                             enhanced_vocals_path = None
                             
                     except Exception as e:
                         self.log(f"[WARNING] Enhancement error: {e}")
-                        self.log("Using original vocals instead")
+                        self.log("Blend mode will not be available. Continuing with original vocals.")
+                        self.root.after(0, lambda err=str(e): messagebox.showwarning(
+                            "Vocal Enhancement Failed",
+                            f"Vocal enhancement encountered an error:\n{err}\n\n"
+                            "Blend mode will not be available.\n"
+                            "Processing will continue with original vocals."
+                        ))
                         enhanced_vocals_path = None
             elif cached_enhanced_path.exists():
                 # Enhancement not requested but cached version exists - use it anyway
