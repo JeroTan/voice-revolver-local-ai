@@ -231,6 +231,9 @@ Train your own RVC voice models from audio samples for highest-quality voice clo
 git clone https://github.com/JeroTan/voice-revolver-local-ai.git
 cd voice-revolver-local-ai
 
+# Activate virtual environment (Python 3.11.9)
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned ; & ".\venv\Scripts\Activate.ps1"
+
 # Install CPU-only dependencies
 pip install -r requirements.txt
 
@@ -243,6 +246,9 @@ python run.py
 # Clone repository
 git clone https://github.com/JeroTan/voice-revolver-local-ai.git
 cd voice-revolver-local-ai
+
+# Activate virtual environment (Python 3.11.9)
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned ; & ".\venv\Scripts\Activate.ps1"
 
 # Install base dependencies
 pip install -r requirements.txt
