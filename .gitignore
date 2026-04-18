@@ -211,3 +211,5 @@ output/
 # Compiled documentation
 docs/_build/
 site/
+
+old/

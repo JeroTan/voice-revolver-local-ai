@@ -65,6 +65,243 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ---
 
+## UI Component Architecture
+- **Pattern:** Component-based architecture for scalability and maintainability
+- **Critical Rule:** **NEVER break working code** - Current app is stable and production-ready
+
+#### Directory Structure
+```
+voice_revolver_ui/
+├── main.py                    # Entry point
+├── main_tk.py                 # Main window (~2000 lines, refactored from 2286)
+├── components/                # Reusable UI widgets ✅ IMPLEMENTED
+│   ├── __init__.py           # Exports LabeledSlider, FileSelector
+│   ├── labeled_slider.py     # ✅ Slider with label and value display
+│   └── file_selector.py      # ✅ File/folder selection widget
+└── features/                  # Feature-specific workspaces ✅ IMPLEMENTED
+    ├── __init__.py
+    ├── startup_dialog/        # ✅ Device selection dialog
+    │   ├── __init__.py
+    │   └── startup_dialog.py  # GPU/CPU detection, device selection
+    ├── loading_dialog/        # ✅ Model loading dialog
+    │   ├── __init__.py
+    │   └── loading_dialog.py  # FFmpeg setup, model downloads
+    ├── menu_bar/              # ✅ Application menu bar
+    │   ├── __init__.py
+    │   └── menu_bar.py        # Workspace menu, View menu, keyboard shortcuts
+    ├── vocal_changer/         # ✅ Voice replacement workspace
+    │   ├── __init__.py
+    │   ├── spectrum_editor.py # ✅ MOVED - Volume curve editor
+    │   └── panels/            # Ready for future panel extraction
+    │       └── __init__.py
+    ├── audio_separation/      # ✅ Stem separation workspace (COMPLETED)
+    ├── text_to_speech/        # ✅ TTS workspace (COMPLETED)
+    ├── voice_cloning/         # ✅ Voice cloning workspace (COMPLETED - 2026-02-23)
+    ├── voice_enhancement/     # ✅ Voice enhancement workspace (COMPLETED - 2026-02-23)
+    ├── track_merger/          # ✅ Track merger workspace (COMPLETED - 2026-02-23)
+    └── audio_training/        # ✅ Audio training workspace (COMPLETED - 2026-02-23)
+```
+
+#### Implemented Components
+
+**General Components** (`components/`):
+1. **LabeledSlider** - Reusable slider with label and value display
+   - Supports custom formatting (integers, floats, units)
+   - Optional change callbacks
+   - Usage: `LabeledSlider(parent, "Pitch:", -12, 12, value_format=lambda v: f"{int(v)} semitones")`
+
+2. **FileSelector** - File/folder selection widget with browse button
+   - Supports file or folder mode
+   - Configurable file type filters
+   - Optional selection callbacks
+   - Usage: `FileSelector(parent, "Audio File:", mode="file", file_types=(("Audio", "*.wav *.mp3"),))`
+
+**Feature Components** (`features/`):
+1. **StartupDialog** - Device selection and hardware detection
+   - Auto-detects GPU (CUDA) availability
+   - Shows CUDA Toolkit warnings if needed
+   - Allows CPU/GPU selection
+
+2. **LoadingDialog** - Dependency checking and model downloads
+   - Checks FFmpeg installation
+   - Downloads AI models if needed
+   - Shows progress bar with status updates
+
+3. **MenuBar** - Application menu bar
+   - Workspace menu (switch between features)
+   - View menu (show/hide logs with F12)
+   - Keyboard shortcuts handling
+
+4. **SpectrumEditor** - Volume curve editing (in `vocal_changer/`)
+   - Moved from root to feature directory
+   - Vocal volume, pitch, blend, reverb, instrumental volume curves
+
+
+#### Component Pattern Template
+```python
+"""
+Component Name - Brief description
+
+This component provides [functionality description].
+Used in: [list of features that use this component]
+"""
+
+import tkinter as tk
+from tkinter import ttk
+
+class ComponentName(ttk.Frame):
+    """Brief description of the component."""
+    
+    def __init__(self, parent, **kwargs):
+        """Initialize the component.
+        
+        Args:
+            parent: Parent tkinter widget
+            **kwargs: Additional configuration options
+        """
+        super().__init__(parent)
+        self._setup_ui()
+        self._bind_events()
+    
+    def _setup_ui(self):
+        """Create and layout child widgets."""
+        # Component-specific UI setup
+        pass
+    
+    def _bind_events(self):
+        """Bind event handlers."""
+        # Event binding logic
+        pass
+    
+    # Public API methods
+    def update_state(self, data):
+        """Update component state with new data."""
+        pass
+```
+
+#### Workspace Switcher Design ✅ IMPLEMENTED (Feb 22, 2026)
+- **Main Window** (main_tk.py) provides a menu: `Workspace → [Feature Name]`
+- Each feature is a complete, self-contained UI implementation
+- Switching workspaces replaces the entire content area using `grid()` / `grid_remove()`
+- Features can share components from `components/`
+
+**Implementation Details:**
+```python
+# In main_tk.py:
+# 1. Create workspace container
+self.workspace_container = ttk.Frame(self.root)
+
+# 2. Create workspaces (all created upfront, hidden initially)
+self.vocal_changer_frame = ttk.Frame(self.workspace_container)
+self.audio_separation_workspace = AudioSeparationWorkspace(
+    parent=self.workspace_container,
+    root=self.root,
+    app_data_path=self.app_data_path,
+    log_callback=self.log
+)
+
+# 3. Enable workspaces in menu (set commands for switching)
+self.menu_bar.enable_workspace("vocal_changer", lambda: self._switch_workspace("vocal_changer"))
+self.menu_bar.enable_workspace("audio_separation", lambda: self._switch_workspace("audio_separation"))
+
+# 4. Workspace switching
+def _switch_workspace(self, workspace_id):
+    # Stop audio playback
+    mixer.music.stop()
+    
+    # Hide all workspaces
+    self.vocal_changer_frame.grid_remove()
+    self.audio_separation_workspace.grid_remove()
+    
+    # Show selected workspace
+    if workspace_id == "audio_separation":
+        self.audio_separation_workspace.grid()
+    else:
+        self.vocal_changer_frame.grid()
+    
+    # Update menu checkmarks
+    self.menu_bar.set_active_workspace(workspace_id)
+```
+
+**Menu Bar Implementation (menu_bar.py):**
+- Create menu items as **clickable by default** (no `state="disabled"`)
+- Use `enable_workspace()` to set command callbacks
+- Use `set_active_workspace()` to show/hide checkmarks
+- Active workspace shows ✓ checkmark but remains clickable
+
+#### Migration Safety Rules
+1. **Git commit before each phase** - Enable rollback with `git reset --hard HEAD`
+2. **Test after each component extraction** - Run app, verify functionality
+3. **Extract smallest components first** - Minimize risk, validate approach
+4. **Update imports incrementally** - One component at a time
+5. **Keep old code until fully migrated** - Don't delete until new code proven stable
+6. **Zero tolerance for regressions** - If anything breaks, rollback immediately
+
+#### Migration Phases
+- **Phase 1:** Create directory structure + documentation ✅ COMPLETED (Feb 22, 2026)
+  - Created `components/` and `features/` directories
+  - Created `features/vocal_changer/` subdirectory
+  - Updated AGENT_MEMORY.md with architecture documentation
+  
+- **Phase 2:** Extract general components → `components/` ✅ COMPLETED (Feb 22, 2026)
+  - Created `LabeledSlider` component (slider + label + value display)
+  - Created `FileSelector` component (file/folder picker with dialog)
+  - Updated `components/__init__.py` to export components
+  
+- **Phase 3:** Extract feature dialogs → `features/` ✅ COMPLETED (Feb 22, 2026)
+  - Extracted `StartupDialog` → `features/startup_dialog/`
+  - Extracted `LoadingDialog` → `features/loading_dialog/`
+  - Extracted menu bar → `features/menu_bar/`
+  - Moved `spectrum_editor.py` → `features/vocal_changer/`
+  - Reduced main_tk.py from 2286 to ~2000 lines (~260 line reduction)
+  
+- **Phase 4:** Extract vocal_changer panels → `features/vocal_changer/panels/` (Future)
+  - Extract audio input panel (file selection, separation controls)
+  - Extract reference panel (voice reference selection)
+  - Extract processing panel (curve editing, processing controls)
+  - Extract preview panel (audio playback, export controls)
+  
+- **Phase 5:** Implement additional workspaces ✅ FULLY COMPLETED (Feb 23, 2026)
+  - ✅ Audio Separation workspace - COMPLETED
+    - Created `features/audio_separation/` directory structure
+    - Implemented `AudioSeparationWorkspace` with InputPanel, TrackListPanel, TrackEditor components
+    - Integrated workspace switching in main_tk.py
+    - Full stem separation (vocals, drums, bass, other) with individual track editing
+    - Per-track export with curve application and format conversion
+  - ✅ Text to Speech workspace - COMPLETED
+    - Dual TTS models (MTL: 23 languages, Turbo: English only)
+    - HuggingFace token management for Turbo mode
+    - Special tokens ([laugh], [sigh]) support
+    - Curve editing (pitch, reverb, volume)
+    - Export with "Use edited version" checkbox
+  - ✅ Voice Cloning workspace - COMPLETED (2026-02-23)
+    - Dual reference modes (Audio File: ChatterBox VC, RVC Model: RVC wrapper)
+    - 6 RVC parameter controls with descriptions (F0 method, pitch shift, index rate, protection, filter radius, RMS mix)
+    - Dynamic file type filtering (audio files vs .zip models)
+    - Non-compounding curve editing (always process from original)
+    - File lock prevention (release audio + clean temp files)
+    - Export checkbox: "Use edited version"
+    - AudioProcessor integration for curve application
+    - Progress callback compatibility (ChatterBox single-arg, RVC dual-arg)
+  - ✅ Voice Enhancement workspace - COMPLETED (2026-02-23)
+    - Resemble Enhance integration (4 parameters: NFE, temperature, solver, denoise first)
+    - Blend mode: A/B comparison between original and enhanced
+    - Curve editing: Blend → Pitch → Volume → Reverb (correct order)
+    - Non-compounding edits (always starts from pristine enhanced.wav)
+    - Sample rate preservation (enhanced matches original)
+    - Export with "Use edited audio" checkbox
+  - ✅ Track Merger workspace - COMPLETED (2026-02-23)
+    - Merge unlimited audio tracks (up to 999 limit)
+    - Per-track: renameable name, waveform visualization, volume slider (0-200%)
+    - Per-track playback with seek slider and time display
+    - pydub AudioSegment overlay for merging with auto-normalize
+    - Curve editing: pitch, volume, reverb on merged output
+    - Export format selection: WAV/MP3/FLAC/OGG
+    - 50/50 layout: Track list (left) | Spectrum editor (right)
+  - Voice Training workspace (Future)
+
+---
+
 ## Coding Standards
 
 ### CRITICAL LESSONS LEARNED
@@ -389,244 +626,18 @@ mute_base_path = os.path.join(current_directory, "temp", "mute")  # Updated from
   logger.info(f"[MUSIC] Applying curve to {filename}")
   ```
 
-### UI Component Architecture
-- **Pattern:** Component-based architecture for scalability and maintainability
-- **Critical Rule:** **NEVER break working code** - Current app is stable and production-ready
-
-#### Directory Structure
-```
-voice_revolver_ui/
-├── main.py                    # Entry point
-├── main_tk.py                 # Main window (~2000 lines, refactored from 2286)
-├── components/                # Reusable UI widgets ✅ IMPLEMENTED
-│   ├── __init__.py           # Exports LabeledSlider, FileSelector
-│   ├── labeled_slider.py     # ✅ Slider with label and value display
-│   └── file_selector.py      # ✅ File/folder selection widget
-└── features/                  # Feature-specific workspaces ✅ IMPLEMENTED
-    ├── __init__.py
-    ├── startup_dialog/        # ✅ Device selection dialog
-    │   ├── __init__.py
-    │   └── startup_dialog.py  # GPU/CPU detection, device selection
-    ├── loading_dialog/        # ✅ Model loading dialog
-    │   ├── __init__.py
-    │   └── loading_dialog.py  # FFmpeg setup, model downloads
-    ├── menu_bar/              # ✅ Application menu bar
-    │   ├── __init__.py
-    │   └── menu_bar.py        # Workspace menu, View menu, keyboard shortcuts
-    ├── vocal_changer/         # ✅ Voice replacement workspace
-    │   ├── __init__.py
-    │   ├── spectrum_editor.py # ✅ MOVED - Volume curve editor
-    │   └── panels/            # Ready for future panel extraction
-    │       └── __init__.py
-    ├── audio_separation/      # ✅ Stem separation workspace (COMPLETED)
-    ├── text_to_speech/        # ✅ TTS workspace (COMPLETED)
-    ├── voice_cloning/         # ✅ Voice cloning workspace (COMPLETED - 2026-02-23)
-    ├── voice_enhancement/     # ✅ Voice enhancement workspace (COMPLETED - 2026-02-23)
-    ├── track_merger/          # ✅ Track merger workspace (COMPLETED - 2026-02-23)
-    └── audio_training/        # ✅ Audio training workspace (COMPLETED - 2026-02-23)
-```
-
-#### Implemented Components
-
-**General Components** (`components/`):
-1. **LabeledSlider** - Reusable slider with label and value display
-   - Supports custom formatting (integers, floats, units)
-   - Optional change callbacks
-   - Usage: `LabeledSlider(parent, "Pitch:", -12, 12, value_format=lambda v: f"{int(v)} semitones")`
-
-2. **FileSelector** - File/folder selection widget with browse button
-   - Supports file or folder mode
-   - Configurable file type filters
-   - Optional selection callbacks
-   - Usage: `FileSelector(parent, "Audio File:", mode="file", file_types=(("Audio", "*.wav *.mp3"),))`
-
-**Feature Components** (`features/`):
-1. **StartupDialog** - Device selection and hardware detection
-   - Auto-detects GPU (CUDA) availability
-   - Shows CUDA Toolkit warnings if needed
-   - Allows CPU/GPU selection
-
-2. **LoadingDialog** - Dependency checking and model downloads
-   - Checks FFmpeg installation
-   - Downloads AI models if needed
-   - Shows progress bar with status updates
-
-3. **MenuBar** - Application menu bar
-   - Workspace menu (switch between features)
-   - View menu (show/hide logs with F12)
-   - Keyboard shortcuts handling
-
-4. **SpectrumEditor** - Volume curve editing (in `vocal_changer/`)
-   - Moved from root to feature directory
-   - Vocal volume, pitch, blend, reverb, instrumental volume curves
-
-
-#### Component Pattern Template
-```python
-"""
-Component Name - Brief description
-
-This component provides [functionality description].
-Used in: [list of features that use this component]
-"""
-
-import tkinter as tk
-from tkinter import ttk
-
-class ComponentName(ttk.Frame):
-    """Brief description of the component."""
-    
-    def __init__(self, parent, **kwargs):
-        """Initialize the component.
-        
-        Args:
-            parent: Parent tkinter widget
-            **kwargs: Additional configuration options
-        """
-        super().__init__(parent)
-        self._setup_ui()
-        self._bind_events()
-    
-    def _setup_ui(self):
-        """Create and layout child widgets."""
-        # Component-specific UI setup
-        pass
-    
-    def _bind_events(self):
-        """Bind event handlers."""
-        # Event binding logic
-        pass
-    
-    # Public API methods
-    def update_state(self, data):
-        """Update component state with new data."""
-        pass
-```
-
-#### Workspace Switcher Design ✅ IMPLEMENTED (Feb 22, 2026)
-- **Main Window** (main_tk.py) provides a menu: `Workspace → [Feature Name]`
-- Each feature is a complete, self-contained UI implementation
-- Switching workspaces replaces the entire content area using `grid()` / `grid_remove()`
-- Features can share components from `components/`
-
-**Implementation Details:**
-```python
-# In main_tk.py:
-# 1. Create workspace container
-self.workspace_container = ttk.Frame(self.root)
-
-# 2. Create workspaces (all created upfront, hidden initially)
-self.vocal_changer_frame = ttk.Frame(self.workspace_container)
-self.audio_separation_workspace = AudioSeparationWorkspace(
-    parent=self.workspace_container,
-    root=self.root,
-    app_data_path=self.app_data_path,
-    log_callback=self.log
-)
-
-# 3. Enable workspaces in menu (set commands for switching)
-self.menu_bar.enable_workspace("vocal_changer", lambda: self._switch_workspace("vocal_changer"))
-self.menu_bar.enable_workspace("audio_separation", lambda: self._switch_workspace("audio_separation"))
-
-# 4. Workspace switching
-def _switch_workspace(self, workspace_id):
-    # Stop audio playback
-    mixer.music.stop()
-    
-    # Hide all workspaces
-    self.vocal_changer_frame.grid_remove()
-    self.audio_separation_workspace.grid_remove()
-    
-    # Show selected workspace
-    if workspace_id == "audio_separation":
-        self.audio_separation_workspace.grid()
-    else:
-        self.vocal_changer_frame.grid()
-    
-    # Update menu checkmarks
-    self.menu_bar.set_active_workspace(workspace_id)
-```
-
-**Menu Bar Implementation (menu_bar.py):**
-- Create menu items as **clickable by default** (no `state="disabled"`)
-- Use `enable_workspace()` to set command callbacks
-- Use `set_active_workspace()` to show/hide checkmarks
-- Active workspace shows ✓ checkmark but remains clickable
-
-#### Migration Safety Rules
-1. **Git commit before each phase** - Enable rollback with `git reset --hard HEAD`
-2. **Test after each component extraction** - Run app, verify functionality
-3. **Extract smallest components first** - Minimize risk, validate approach
-4. **Update imports incrementally** - One component at a time
-5. **Keep old code until fully migrated** - Don't delete until new code proven stable
-6. **Zero tolerance for regressions** - If anything breaks, rollback immediately
-
-#### Migration Phases
-- **Phase 1:** Create directory structure + documentation ✅ COMPLETED (Feb 22, 2026)
-  - Created `components/` and `features/` directories
-  - Created `features/vocal_changer/` subdirectory
-  - Updated AGENT_MEMORY.md with architecture documentation
-  
-- **Phase 2:** Extract general components → `components/` ✅ COMPLETED (Feb 22, 2026)
-  - Created `LabeledSlider` component (slider + label + value display)
-  - Created `FileSelector` component (file/folder picker with dialog)
-  - Updated `components/__init__.py` to export components
-  
-- **Phase 3:** Extract feature dialogs → `features/` ✅ COMPLETED (Feb 22, 2026)
-  - Extracted `StartupDialog` → `features/startup_dialog/`
-  - Extracted `LoadingDialog` → `features/loading_dialog/`
-  - Extracted menu bar → `features/menu_bar/`
-  - Moved `spectrum_editor.py` → `features/vocal_changer/`
-  - Reduced main_tk.py from 2286 to ~2000 lines (~260 line reduction)
-  
-- **Phase 4:** Extract vocal_changer panels → `features/vocal_changer/panels/` (Future)
-  - Extract audio input panel (file selection, separation controls)
-  - Extract reference panel (voice reference selection)
-  - Extract processing panel (curve editing, processing controls)
-  - Extract preview panel (audio playback, export controls)
-  
-- **Phase 5:** Implement additional workspaces ✅ FULLY COMPLETED (Feb 23, 2026)
-  - ✅ Audio Separation workspace - COMPLETED
-    - Created `features/audio_separation/` directory structure
-    - Implemented `AudioSeparationWorkspace` with InputPanel, TrackListPanel, TrackEditor components
-    - Integrated workspace switching in main_tk.py
-    - Full stem separation (vocals, drums, bass, other) with individual track editing
-    - Per-track export with curve application and format conversion
-  - ✅ Text to Speech workspace - COMPLETED
-    - Dual TTS models (MTL: 23 languages, Turbo: English only)
-    - HuggingFace token management for Turbo mode
-    - Special tokens ([laugh], [sigh]) support
-    - Curve editing (pitch, reverb, volume)
-    - Export with "Use edited version" checkbox
-  - ✅ Voice Cloning workspace - COMPLETED (2026-02-23)
-    - Dual reference modes (Audio File: ChatterBox VC, RVC Model: RVC wrapper)
-    - 6 RVC parameter controls with descriptions (F0 method, pitch shift, index rate, protection, filter radius, RMS mix)
-    - Dynamic file type filtering (audio files vs .zip models)
-    - Non-compounding curve editing (always process from original)
-    - File lock prevention (release audio + clean temp files)
-    - Export checkbox: "Use edited version"
-    - AudioProcessor integration for curve application
-    - Progress callback compatibility (ChatterBox single-arg, RVC dual-arg)
-  - ✅ Voice Enhancement workspace - COMPLETED (2026-02-23)
-    - Resemble Enhance integration (4 parameters: NFE, temperature, solver, denoise first)
-    - Blend mode: A/B comparison between original and enhanced
-    - Curve editing: Blend → Pitch → Volume → Reverb (correct order)
-    - Non-compounding edits (always starts from pristine enhanced.wav)
-    - Sample rate preservation (enhanced matches original)
-    - Export with "Use edited audio" checkbox
-  - ✅ Track Merger workspace - COMPLETED (2026-02-23)
-    - Merge unlimited audio tracks (up to 999 limit)
-    - Per-track: renameable name, waveform visualization, volume slider (0-200%)
-    - Per-track playback with seek slider and time display
-    - pydub AudioSegment overlay for merging with auto-normalize
-    - Curve editing: pitch, volume, reverb on merged output
-    - Export format selection: WAV/MP3/FLAC/OGG
-    - 50/50 layout: Track list (left) | Spectrum editor (right)
-  - Voice Training workspace (Future)
-
----
-
 ## History Log
+
+### 2026-04-18 | Virtual Environment Recovery and Python 3.11 Standardization
+- **Topic:** Diagnosed and fixed a complete app crash caused by mixed Python environment DLLs.
+- **Issue:** The main env was somehow created with Python 3.10, but it contained a Python 3.11 PyTorch build (cp311). This caused a silent [WinError 126] The specified module could not be found when loading 	orch_python.dll. 
+- **Action Taken:**
+  1. Backed up corrupted environment to ./old/venv_backup.
+  2. Strictly enforced the Python Environment Standard (from 2026-02-21) by wiping the corrupted env and rebuilding it purely with **Python 3.11.x**.
+  3. Re-installed PyTorch 2.1.2+cu118 and handled a strict dependency conflict with chatterbox-tts (which mistakenly required 	orch==2.6.0).
+  4. Ran patch_dataclass_bugs.py to fix the hydra mutable defaults bug that breaks Demucs on Python 3.11.
+- **Key Takeaway:** If 
+un.bat crashes immediately, check env/pyvenv.cfg to ensure it is **exactly** Python 3.11.x, and never mix cp310 and cp311 wheels. Also, remember to run patch_dataclass_bugs.py anytime the env is rebuilt from scratch!
 
 ### 2026-02-22 | Workspace Temp Directory Structure
 - **Topic:** Implemented workspace-prefixed temp directory organization for multi-workspace support

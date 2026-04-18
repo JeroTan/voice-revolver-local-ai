@@ -232,7 +232,7 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=300  # 5 minute timeout
+                timeout=600  # 10 minute timeout
             )
             
             if result.returncode != 0:
@@ -249,7 +249,7 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
             return output_path, None
             
         except subprocess.TimeoutExpired:
-            return None, "RVC conversion timed out (>5 minutes)"
+            return None, "RVC conversion timed out (>10 minutes)"
         except Exception as e:
             logger.error(f"Voice conversion error: {e}")
             import traceback

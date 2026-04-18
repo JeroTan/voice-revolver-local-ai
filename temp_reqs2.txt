@@ -1,0 +1,73 @@
+# Voice Revolver AI - Requirements
+# Core dependencies
+
+# Python Version: 3.11.x required (NOT 3.14 - has PyTorch DLL issues)
+# To create venv: py -3.11 -m venv venv
+# To activate: .\venv\Scripts\Activate.ps1
+
+# NumPy - MUST be <2.0 for PyTorch 2.1.2 compatibility
+numpy<2.0
+
+# AI/ML - PyTorch 2.1.2 LTS (stable on Windows with Python 3.11)
+# For GPU (RTX/GTX series): Requires CUDA Toolkit 11.8 installed
+#   Download: https://developer.nvidia.com/cuda-11-8-0-download-archive
+#   Then: pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118
+# For CPU only (no CUDA installation needed):
+demucs
+
+# MDX Separation - OPTIONAL (best vocal isolation)
+# Install in separate venv-mdx to avoid dependency conflicts:
+#   python -m venv venv-mdx
+#   .\venv-mdx\Scripts\Activate.ps1
+#   pip install audio-separator[cpu]>=0.18.0
+# Called via subprocess from main app (see mdx_wrapper.py)
+
+# Voice conversion
+# ChatterBox - Primary voice conversion engine for audio references (better quality than OpenVoice)
+
+# RVC (Retrieval-based Voice Conversion) - EXPERIMENTAL
+# Installation: pip install rvc-python faiss-cpu praat-parselmouth pyworld
+# Known Issue: Python 3.11 + fairseq/hydra have dataclass bugs (mutable defaults)
+# Workaround: Downgrade numpy to 1.23.5 and scipy to 1.10.1, then install RVC
+# Note: This breaks some other packages (scikit-learn, ChatterBox may have warnings)
+# Status: Feature implemented but requires manual dependency resolution
+# TODO: Wait for fairseq/hydra Python 3.11 compatibility fixes
+rvc-python
+faiss-cpu
+praat-parselmouth
+pyworld
+
+# OpenVoice - Alternative voice conversion (legacy, kept for reference)
+whisper-timestamped
+
+# Audio processing
+pydub
+soundfile
+librosa
+noisereduce
+pedalboard
+pyloudnorm
+
+# Resemble Enhance - REQUIRES SEPARATE VENV (venv-enhance)
+# Install in separate environment to avoid dependency conflicts:
+#   python -m venv venv-enhance
+#   .\venv-enhance\Scripts\Activate.ps1
+#   pip install resemble-enhance --upgrade
+# Reason: Requires scipy>=1.11.4, numpy>=1.26.2, deepspeed (Windows incompatible)
+# Called via subprocess from main app (see resemble_enhance_wrapper.py)
+
+# Visualization & UI (Phase 2)
+matplotlib>=3.8.0
+scipy>=1.10.0
+
+# FFmpeg auto-download
+static-ffmpeg
+
+# HTTP downloads
+requests
+
+# Audio preview
+pygame
+
+# Development/Build
+pyinstaller
