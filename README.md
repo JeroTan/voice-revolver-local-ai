@@ -1,5 +1,11 @@
 # Voice Revolver AI
 
+<div align="center">
+  <img src="assets/startup.png" alt="Voice Revolver AI Main Interface" width="100%">
+  <br>
+  <em>A comprehensive, locally-run AI audio workstation with 7 specialized tools.</em>
+</div>
+
 > **AI-Powered Audio Workstation** for voice cloning, vocal replacement, stem separation, and custom voice model training - 100% local, no cloud required.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -69,6 +75,9 @@ All processing happens **100% locally** on your computer - no cloud uploads, no 
 ## 🎛️ 7 Specialized Workspaces
 
 ### 1. 🎤 **Vocal Changer** - Replace Vocals in Songs
+
+<img src="assets/01-vocal-changer.png" alt="Vocal Changer Workspace interface showing reference voice options and editing curves" width="100%">
+
 Transform existing songs by replacing the original vocals with any reference voice.
 
 **Use Cases:**
@@ -87,6 +96,9 @@ Transform existing songs by replacing the original vocals with any reference voi
 ---
 
 ### 2. 🎵 **Audio Separation** - Extract Individual Stems
+
+<img src="assets/02-audio-separation-workspace.png" alt="Audio Separation Workspace showing Demucs stems isolation and waveform visualization" width="100%">
+
 Isolate vocals, drums, bass, and other instruments from any song.
 
 **Use Cases:**
@@ -105,6 +117,9 @@ Isolate vocals, drums, bass, and other instruments from any song.
 ---
 
 ### 3. 🗣️ **Text to Speech** - Generate Speech with Voice Cloning
+
+<img src="assets/03-text-separation.png" alt="Text to Speech Workspace showing text input, language selection, and voice cloning settings" width="100%">
+
 Convert text to natural-sounding speech using AI voice models.
 
 **Use Cases:**
@@ -123,6 +138,9 @@ Convert text to natural-sounding speech using AI voice models.
 ---
 
 ### 4. 🎭 **Voice Cloning** - Clone Any Voice
+
+<img src="assets/04-voice-cloning.png" alt="Voice Cloning Workspace showing RVC model selection and inference parameters" width="100%">
+
 Clone voices using either simple audio samples or professional RVC models.
 
 **Use Cases:**
@@ -141,6 +159,9 @@ Clone voices using either simple audio samples or professional RVC models.
 ---
 
 ### 5. ✨ **Voice Enhancement** - AI Audio Quality Improvement
+
+<img src="assets/05-voice-enhancement.png" alt="Voice Enhancement Workspace displaying Resemble Enhance AI and pedalboard effects chain" width="100%">
+
 Enhance audio quality with AI-powered denoising and professional effects.
 
 **Use Cases:**
@@ -159,6 +180,9 @@ Enhance audio quality with AI-powered denoising and professional effects.
 ---
 
 ### 6. 🎚️ **Track Merger** - Merge Multiple Audio Files
+
+<img src="assets/06-track-merger.png" alt="Track Merger Workspace showing multi-track timeline and volume mixing controls" width="100%">
+
 Combine unlimited audio tracks into a single mixed output.
 
 **Use Cases:**
@@ -178,6 +202,9 @@ Combine unlimited audio tracks into a single mixed output.
 ---
 
 ### 7. 🎓 **Audio Training** - Train Custom RVC Voice Models
+
+<img src="assets/07-audio-training.png" alt="Audio Training Workspace illustrating the 4-step pipeline for building custom voice models" width="100%">
+
 Train your own RVC voice models from audio samples for highest-quality voice cloning.
 
 **Use Cases:**
