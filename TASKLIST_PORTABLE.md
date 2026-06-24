@@ -198,6 +198,23 @@
 - [ ] Confirm startup dialog opens.
 - [ ] Confirm loading dialog completes.
 - [ ] Confirm main UI opens.
+- [ ] Add headless/mock installer bootstrap command.
+- [ ] Headless test accepts fake install path.
+- [ ] Headless test accepts fake model path.
+- [ ] Headless test accepts shortcut disabled.
+- [ ] Headless test checks or installs Python 3.11.x.
+- [ ] Headless test creates/checks main env.
+- [ ] Headless test creates/checks RVC env.
+- [ ] Headless test creates/checks MDX env.
+- [ ] Headless test creates/checks Enhance env.
+- [ ] Headless test installs/checks exact dependency locks.
+- [ ] Headless test downloads/checks required models.
+- [ ] Headless test writes config file.
+- [ ] Headless test validates launcher command without opening installer UI.
+- [ ] Headless test supports dry-run mode with no filesystem mutation except logs.
+- [ ] Headless test supports clean temp install root for full bootstrap simulation.
+- [ ] Headless test emits machine-readable progress events.
+- [ ] Headless test writes installer bootstrap log.
 - [ ] Test installer dry run with custom install path.
 - [ ] Test installer dry run with custom model path.
 - [ ] Test installer dry run with shortcut unchecked.
