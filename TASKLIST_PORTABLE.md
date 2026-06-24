@@ -201,6 +201,15 @@
 - [ ] Add headless/mock installer bootstrap command.
 - [ ] Headless test accepts fake install path.
 - [ ] Headless test accepts fake model path.
+- [ ] Headless test has interactive prompt mode.
+- [ ] Interactive headless test asks where to install program.
+- [ ] Interactive headless test shows default install path.
+- [ ] Interactive headless test lets tester type custom install folder.
+- [ ] Interactive headless test asks where to store models/weights.
+- [ ] Interactive headless test shows default model path.
+- [ ] Interactive headless test lets tester type custom model folder.
+- [ ] Interactive headless test asks whether to create shortcut.
+- [ ] Interactive headless test accepts typed yes/no shortcut answer.
 - [ ] Headless test accepts shortcut disabled.
 - [ ] Headless test checks or installs Python 3.11.x.
 - [ ] Headless test creates/checks main env.
