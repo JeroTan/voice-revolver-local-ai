@@ -127,7 +127,7 @@ class AudioTrainingWorkspace(ttk.Frame):
         """
         try:
             # Get temp directory path for this model
-            temp_dir = self.app_data_path / "temp" / "audio_training" / model_name
+            temp_dir = self.file_manager.temp_path / "audio_training" / model_name
             
             if temp_dir.exists():
                 self._log(f"Cleaning up previous training files for: {model_name}")

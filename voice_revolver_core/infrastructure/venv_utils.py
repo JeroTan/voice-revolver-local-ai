@@ -41,9 +41,26 @@ def get_venv_python(venv_name: str) -> Path:
         FileNotFoundError: If venv not found
         RuntimeError: If VOICE_REVOLVER_VENV_DIR not set in frozen mode
     """
+    venv_dir = os.environ.get('VOICE_REVOLVER_VENV_DIR')
+    if venv_dir:
+        venv_path = Path(venv_dir) / venv_name
+        python_exe = venv_path / "Scripts" / "python.exe"
+        if not python_exe.exists():
+            python_exe_unix = venv_path / "bin" / "python"
+            if python_exe_unix.exists():
+                logger.info(f"Using venv (portable mode): {python_exe_unix}")
+                return python_exe_unix
+            raise FileNotFoundError(
+                f"Virtual environment not found: {venv_name}\n"
+                f"Expected location: {python_exe}\n\n"
+                f"Installer should have created this environment under:\n"
+                f"  {venv_dir}"
+            )
+        logger.info(f"Using venv (portable mode): {python_exe}")
+        return python_exe
+
     if is_frozen():
         # Running from .exe - use extracted venvs in AppData
-        venv_dir = os.environ.get('VOICE_REVOLVER_VENV_DIR')
         if not venv_dir:
             raise RuntimeError(
                 "VOICE_REVOLVER_VENV_DIR environment variable not set.\n"

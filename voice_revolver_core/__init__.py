@@ -21,11 +21,6 @@ from .domain import (
     ProgressTracker,
 )
 
-from .application import (
-    VoiceReplacementService,
-    ProjectService,
-)
-
 # Infrastructure imports are done lazily to avoid PyTorch DLL issues
 # Import directly from specific modules when needed:
 # from voice_revolver_core.infrastructure.demucs_wrapper import DemucsWrapper
@@ -35,6 +30,17 @@ from .application import (
 # from voice_revolver_core.infrastructure.ffmpeg_checker import FFmpegChecker
 
 __version__ = "1.0.0"
+
+
+def __getattr__(name):
+    """Lazy application exports avoid loading optional audio DLLs at package import."""
+    if name == "VoiceReplacementService":
+        from .application.voice_replacement_service import VoiceReplacementService
+        return VoiceReplacementService
+    if name == "ProjectService":
+        from .application.project_service import ProjectService
+        return ProjectService
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     # Domain

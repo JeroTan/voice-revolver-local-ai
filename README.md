@@ -22,8 +22,12 @@
 - [Key Features](#key-features)
 - [7 Specialized Workspaces](#7-specialized-workspaces)
 - [Installation](#installation)
-  - [For Beginners](#for-beginners-recommended)
-  - [For Advanced Users](#for-advanced-users)
+  - [Method 1: Download Installer](#method-1-download-installer-coming-soon)
+  - [Method 2: Build Installer Yourself](#method-2-build-installer-yourself)
+  - [Current Stable Developer Run](#current-stable-developer-run)
+  - [Portable Installer Details](#portable-installer-details)
+  - [Headless Bootstrap Tests](#headless-bootstrap-tests)
+  - [Dependency Lock Files](#dependency-lock-files)
   - [For Developers](#for-developers)
 - [Quick Start Guide](#quick-start-guide)
 - [System Requirements](#system-requirements)
@@ -225,134 +229,219 @@ Train your own RVC voice models from audio samples for highest-quality voice clo
 
 ## 📥 Installation
 
-### For Beginners (Recommended)
+There are two installation paths:
 
-**Option 1: One-Click Installer** (Coming Soon - v1.3)
-- Download `VoiceRevolverAI-Installer.exe`
-- Double-click to install
-- Launch from desktop shortcut
+- **Method 1:** download the ready-made installer.
+- **Method 2:** build the installer yourself from this repository.
 
-**Option 2: Simple Setup** (Current - 5 minutes)
+### Method 1: Download Installer (Coming Soon)
 
-1. **Install Python 3.11** from [python.org](https://www.python.org/downloads/)
-   - ⚠️ Check "Add Python to PATH" during installation
-   - ⚠️ Use Python 3.11.x (not 3.14 - incompatible with GPU acceleration)
+Download link: **Coming soon**
 
-2. **Download Voice Revolver AI:**
-   - Click the green `Code` button above → `Download ZIP`
-   - Extract to `C:\VoiceRevolverAI\` (or any folder)
+When the installer is available:
 
-3. **Install Dependencies:**
-   - Open the folder in File Explorer
-   - Double-click **`run.bat`** (installs dependencies automatically on first run)
+1. Download `VoiceRevolverAI-Setup.exe`.
+2. Run the installer.
+3. Choose where to install the program.
+4. Choose where to store models/weights.
+5. Choose whether to create a desktop shortcut.
+6. Keep dependency and model-cache installation enabled on first install.
+7. Click `Install`.
+8. When setup succeeds, choose `Run the app`, `Run and close`, or `Close`.
 
-4. **Done!** The app will launch automatically.
+The installed app is launched through `voice-revolver.exe`. It opens a visible console beside the UI and follows the same startup workflow as `run_dev.bat`.
+
+### Method 2: Build Installer Yourself
+
+Use this when you want to create the installer locally.
+
+Requirements:
+- Windows
+- Python 3.11
+- working project checkout with the repo virtual environments available
+- local RVC asset files under `rvc/models/` if you want setup to bundle RVC predictors/embedders/pretrained weights
+- enough disk space for build artifacts, dependency caches, model weights, and PyInstaller output
+
+Build command:
+
+```powershell
+.\venv\Scripts\python.exe tools\build_installer.py
+```
+
+Build outputs:
+- `dist/VoiceRevolverAI-Setup.exe` - distributable installer
+- `dist/VoiceRevolverAI-Setup-v1.0.0.exe` - versioned copy
+- `dist/voice-revolver.exe` - installed-app launcher binary used by setup
+
+Validate the built installer payload without opening the installer UI:
+
+```powershell
+$p = Start-Process -FilePath .\dist\VoiceRevolverAI-Setup.exe -ArgumentList '--validate-only' -Wait -PassThru
+$p.ExitCode
+```
+
+Expected result: `0`
+
+Do not distribute `dist/voice-revolver.exe` by itself. It is only the launcher copied into an installed app folder by `VoiceRevolverAI-Setup.exe`.
+
+### Current Stable Developer Run
+
+`run_dev.bat` is the source-of-truth stable launcher for this repository.
+
+```powershell
+.\run_dev.bat
+```
+
+It does this:
+- activates repo-local `venv`
+- prints Python version
+- runs `.\venv\Scripts\python.exe run.py`
+- opens the console, startup device dialog, loading/model dialog, then the main UI
+
+Use `run_dev.bat` when developing or verifying regressions.
 
 ---
 
-### For Advanced Users
+### Portable Installer Details
 
-#### CPU-Only Installation (No GPU)
+The portable installer flow now exists in repo tooling.
+
+Build outputs:
+- `dist/VoiceRevolverAI-Setup.exe`
+- `dist/VoiceRevolverAI-Setup-v1.0.0.exe`
+- `dist/voice-revolver.exe`
+
+`VoiceRevolverAI-Setup.exe` is the distributable installer. It contains a runtime-only staged app payload plus the launcher binary. Installer logs may say `copy`; that means copying bundled payload files from the setup package into the selected install/model folders. The target machine should not need this development repo.
+
+Setup payload includes only runtime essentials:
+- `run.py`
+- `assets/`
+- `rvc/` runtime code and bundled RVC weights
+- `voice_revolver_core/`
+- `voice_revolver_ui/`
+- exact dependency lock files
+- `tools/portable_installer/` installer support code
+
+Setup payload excludes project docs, agent memory, tasklists, tests, samples, old files, and development/build scripts.
+
+Installer behavior:
+- asks where to install the program
+- defaults to `%ProgramFiles%\Voice Revolver AI`
+- asks where to store models/weights
+- asks whether to create a desktop shortcut
+- enables model-cache download during setup by default
+- creates/writes portable config
+- installs/copies app files
+- installs `voice-revolver.exe`
+- copies bundled RVC weights to the selected model folder
+- can install Python 3.11 and exact dependency lock files through the bootstrap engine
+- audits installed package versions against lock files before skipping existing environments
+- repairs dependency drift by reinstalling the exact lock file when needed
+- shows real-time stage/log/progress output
+- finishes with `Run the app`, `Run and close`, and `Close`
+- changes `Close` to `Cancel` while installing; cancel stops the active command and cleans partial install artifacts where safe
+
+Model behavior:
+- ChatterBox, Demucs, Torch, HuggingFace, MDX, and related caches are redirected to the selected model folder where supported.
+- Demucs `htdemucs_ft` weights are prefetched during setup when model downloads are enabled.
+- RVC pretrained weights are bundled/copied into the selected model folder.
+- RVC predictor/embedder assets are validated during setup and loaded from the selected model folder at runtime.
+- OpenVoice V2 is legacy optional. Its upstream checkpoint URL returned 404 during 2026-06-24 testing, so setup no longer auto-downloads or requires OpenVoice.
+- Installer applies a Hydra compatibility patch required by Demucs on Python 3.11; package locks alone do not preserve this local stable-env patch.
+- Installer repairs `setuptools`/`PyYAML` runtime files when a recreated venv has broken package contents.
+- Installer validates `soundfile` in all envs and force-reinstalls the locked wheel if `libsndfile_x64.dll` is missing or broken.
+
+Installed app behavior:
+- double-click `voice-revolver.exe`
+- visible console opens
+- launcher reads `config\portable.json`
+- launcher sets portable env vars
+- launcher runs the same app flow as `run_dev.bat`
+
+### Headless Bootstrap Tests
+
+Use this to test installer logic without clicking through the setup UI.
+
+Dry-run with explicit paths:
 ```powershell
-# Clone repository
-git clone https://github.com/JeroTan/voice-revolver-local-ai.git
-cd voice-revolver-local-ai
-
-# Activate virtual environment (Python 3.11.9)
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned ; & ".\venv-enhance\Scripts\Activate.ps1"
-
-# Install CPU-only dependencies
-pip install -r requirements.txt
-
-# Run application
-python run.py
+.\venv\Scripts\python.exe tools\portable_installer\bootstrap.py `
+  --dry-run `
+  --install-root F:\tmp\VoiceRevolverAI `
+  --model-root F:\tmp\VoiceRevolverAI-Models `
+  --no-shortcut `
+  --install-dependencies `
+  --download-models `
+  --log-path F:\tmp\voice-revolver-bootstrap.jsonl
 ```
 
-#### GPU-Accelerated Installation (NVIDIA GPUs - 10-20x Faster)
+Interactive prompt mode:
 ```powershell
-# Clone repository
-git clone https://github.com/JeroTan/voice-revolver-local-ai.git
-cd voice-revolver-local-ai
-
-# Activate virtual environment (Python 3.11.9)
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned ; & ".\venv-enhance\Scripts\Activate.ps1"
-
-# Install base dependencies
-pip install -r requirements.txt
-
-# Install CUDA-enabled PyTorch (CUDA 11.8)
-pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118 --force-reinstall
-
-# Install cuDNN libraries
-pip install nvidia-cudnn-cu11 nvidia-cublas-cu11
-
-# Run application
-python run.py
+.\venv\Scripts\python.exe tools\portable_installer\bootstrap.py --dry-run --interactive
 ```
 
-**Note:** GPU acceleration requires [CUDA Toolkit 11.8](https://developer.nvidia.com/cuda-11-8-0-download-archive) installed separately.
+The interactive mode asks:
+- where to install the program
+- where to store models/weights
+- whether to create a shortcut
 
-#### RVC Environment Setup (Required for Voice Cloning & Audio Training)
+Full local bootstrap simulation, same engine used by the installer UI:
 ```powershell
-# Create isolated RVC environment
-python -m venv venv-rvc
-.\venv-rvc\Scripts\Activate.ps1
-
-# Install Applio dependencies
-pip install numpy==2.3.5 scipy==1.16.3 librosa==0.11.0 soundfile==0.12.1
-pip install transformers==4.44.2 torchcrepe torchfcpe einops
-pip install noisereduce pedalboard soxr stftpitchshift
-pip install faiss-cpu==1.13.2  # Or faiss-gpu for faster index search
-
-# Clone Applio RVC module
-git clone --depth 1 https://github.com/IAHispano/Applio.git
-Copy-Item -Path "Applio\rvc" -Destination "." -Recurse -Force
-Remove-Item -Recurse -Force Applio
-
-# Download RMVPE pitch predictor (137MB)
-New-Item -ItemType Directory -Path "rvc\models\predictors" -Force
-Invoke-WebRequest `
-    -Uri "https://huggingface.co/IAHispano/Applio/resolve/main/Resources/predictors/rmvpe.pt" `
-    -OutFile "rvc\models\predictors\rmvpe.pt"
-
-# Deactivate and return to main environment
-deactivate
+.\venv\Scripts\python.exe tools\portable_installer\bootstrap.py `
+  --install-root D:\sample `
+  --model-root D:\sample2 `
+  --shortcut `
+  --install-dependencies `
+  --download-models `
+  --install-scoop `
+  --launcher-exe F:\dev\Python\voice-revolver-local-ai\dist\voice-revolver.exe `
+  --log-path C:\Users\jerow\AppData\Local\VoiceRevolverAI\logs\codex-headless-d-sample.jsonl
 ```
+
+Last verified 2026-06-25 with `D:\sample` and `D:\sample2`: all four venvs matched locks, lock drift repair corrected `numpy==2.4.6` back to locked `numpy==1.23.5`, simulated missing `libsndfile_x64.dll` repaired through locked `soundfile==0.13.1`, Demucs/Hydra validation passed, Demucs weights downloaded into `D:\sample2`, RVC loaded `rmvpe.pt` from `D:\sample2\rvc\predictors`, RVC wrapper conversion produced `converted.wav`, Resemble Enhance resolved through `D:\sample\venvs\venv-enhance`, tiny Demucs separation produced all stems, and `D:\sample\voice-revolver.exe --validate-only` returned `Validation OK`.
+
+---
+
+### Dependency Lock Files
+
+The installer uses lock files generated from the working local environments:
+
+- `requirements-main.lock.txt` from `venv`
+- `requirements-rvc.lock.txt` from `venv-rvc`
+- `requirements-mdx.lock.txt` from `venv-mdx`
+- `requirements-enhance.lock.txt` from `venv-enhance`
+
+Current env split:
+- `venv`: main app, UI, Demucs, ChatterBox, optional legacy OpenVoice code
+- `venv-rvc`: RVC inference/training
+- `venv-mdx`: MDX/audio-separator
+- `venv-enhance`: Resemble Enhance
+
+Do not rely on `requirements.txt` alone for installer reproducibility.
 
 ---
 
 ### For Developers
 
-#### Full Development Setup
 ```powershell
 # Clone with full git history
 git clone https://github.com/JeroTan/voice-revolver-local-ai.git
 cd voice-revolver-local-ai
 
-# Create main virtual environment
-python -m venv .venv-1
-.\.venv-1\Scripts\Activate.ps1
+# Stable development run
+.\run_dev.bat
 
-# Install main dependencies
-pip install -r requirements.txt
+# Or manually run the same target
+.\venv\Scripts\python.exe run.py
 
-# For GPU development (NVIDIA GPUs)
-pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu118 --force-reinstall
-pip install nvidia-cudnn-cu11 nvidia-cublas-cu11
+# Build portable launcher + setup
+.\venv\Scripts\python.exe tools\build_installer.py
 
-# Setup additional virtual environments
-python -m venv venv-rvc      # RVC models (see RVC setup above)
-python -m venv venv-mdx      # MDX separation (optional)
-
-python -m venv venv-mdx      # MDX separation (optional)
-python -m venv venv-enhance  # Resemble Enhance (optional)
-
-# Run development server
-python run.py
-
-# Run tests (when available)
-python -m pytest tests/
+# Run smoke validation
+.\dist\voice-revolver.exe --validate-only
 ```
+
+**Important:** `run_dev.bat` is the stable baseline. If `run_dev.bat` works but installed `voice-revolver.exe` fails, the bug is in packaging/launcher. If both fail, core app changed incorrectly.
+
 
 **Project Structure:**
 ```
@@ -378,17 +467,18 @@ See **[AGENT_MEMORY.md](AGENT_MEMORY.md)** for development history and technical
 ### First Launch
 
 1. **Run the application:**
-   - Double-click `run.bat` (Windows)
-   - Or: `python run.py` in terminal
+   - Installed app: double-click `voice-revolver.exe`
+   - Development app: double-click `run_dev.bat`
+   - Manual equivalent: `.\venv\Scripts\python.exe run.py`
 
 2. **Choose your device:**
    - **GPU (CUDA)** - For NVIDIA graphics cards (10-20x faster)
    - **CPU** - For any computer (works but slower)
 
 3. **Wait for models to download** (first time only):
-   - Demucs models (~350MB)
-   - ChatterBox VC models (~200MB)
-   - This happens automatically, takes 5-10 minutes
+   - Models use the installer-selected model folder when running installed.
+   - Development defaults to `%LOCALAPPDATA%\VoiceRevolverAI\models`.
+   - First run may take several minutes depending on model cache state.
 
 4. **Start using:**
    - Select a workspace from the menu: `Workspace → [Choose Feature]`
@@ -429,8 +519,8 @@ See **[AGENT_MEMORY.md](AGENT_MEMORY.md)** for development history and technical
 - **OS**: Windows 10/11 (64-bit)
 - **CPU**: Intel Core i5 / AMD Ryzen 5 (4+ cores)
 - **RAM**: 8 GB
-- **Storage**: 5 GB free space
-- **Python**: 3.11.x
+- **Storage**: 10 GB free space for app + caches
+- **Python**: 3.11.x for development; installer can bootstrap Python 3.11
 
 **Performance**: 
 - Stem separation: 2-5 minutes per song
@@ -442,8 +532,8 @@ See **[AGENT_MEMORY.md](AGENT_MEMORY.md)** for development history and technical
 - **CPU**: Intel Core i7 / AMD Ryzen 7
 - **GPU**: NVIDIA RTX 3060 / RTX 4050 or better (6GB+ VRAM)
 - **RAM**: 16 GB
-- **Storage**: 10 GB free space (models + temp files)
-- **Python**: 3.11.x
+- **Storage**: 25 GB free space for installer, venvs, models, and temp files
+- **Python**: 3.11.x for development; installer can bootstrap Python 3.11
 - **CUDA**: Toolkit 11.8
 
 **Performance**:
@@ -488,7 +578,7 @@ Download from: [NVIDIA CUDA Toolkit 11.8](https://developer.nvidia.com/cuda-11-8
 #### 2. Install PyTorch with CUDA Support
 ```powershell
 # Activate your virtual environment
-.\.venv-1\Scripts\Activate.ps1
+.\venv\Scripts\Activate.ps1
 
 # Uninstall CPU-only PyTorch
 pip uninstall torch torchaudio -y
@@ -544,9 +634,9 @@ See **[Troubleshooting](#troubleshooting)** for common GPU issues.
 ### Common Issues
 
 #### "Python not found" or "pip not found"
-- **Solution**: Install Python 3.11.x from [python.org](https://www.python.org/downloads/)
-- During installation, check **"Add Python to PATH"**
-- Restart terminal after installation
+- **Installed app**: run setup again and allow Python 3.11 bootstrap.
+- **Development app**: use `run_dev.bat` or verify `.\venv\Scripts\python.exe` exists.
+- **Manual fix**: install Python 3.11.x from [python.org](https://www.python.org/downloads/) or through Scoop.
 
 #### "GPU not detected" or "CUDA not available"
 1. **Check GPU compatibility**: Must be NVIDIA GPU (GTX 900 series or newer)
@@ -562,20 +652,31 @@ See **[Troubleshooting](#troubleshooting)** for common GPU issues.
 - **Cause**: cuDNN libraries missing
 - **Solution**: `pip install nvidia-cudnn-cu11 nvidia-cublas-cu11`
 
+#### `OSError: cannot load library 'libsndfile.dll': error 0x7e`
+- **Cause**: broken partial `soundfile` wheel payload in an installed venv.
+- **Installed app**: rerun setup or headless bootstrap with `--install-dependencies`; bootstrap validates `soundfile` and reinstalls the locked wheel.
+- **Manual repair**: `D:\sample\venvs\venv\Scripts\python.exe -m pip install --force-reinstall --no-cache-dir --no-deps soundfile==0.13.1`
+
+#### `No such file or directory: 'rvc\\models\\predictors\\rmvpe.pt'`
+- **Cause**: installed RVC subprocess using old repo-relative asset path instead of installer-selected model folder.
+- **Installed app**: use installer build from 2026-06-25 11:07 or newer, then restart `voice-revolver.exe`.
+- **Expected asset path**: `{model_root}\rvc\predictors\rmvpe.pt`, for example `D:\sample2\rvc\predictors\rmvpe.pt`.
+
 #### "Out of memory" during processing
 - **For GPU**: Reduce batch size in RVC training, or use CPU mode
 - **For CPU**: Close other applications, increase virtual memory, upgrade RAM
 
 #### "ModuleNotFoundError: No module named 'rvc'"
-- **Cause**: RVC environment not set up
-- **Solution**: Follow [RVC Environment Setup](#rvc-environment-setup-required-for-voice-cloning--audio-training)
+- **Cause**: RVC files or `venv-rvc` not available to the launcher.
+- **Installed app**: check `config\portable.json`, especially `venv_root` and `model_root`.
+- **Development app**: verify repo has `rvc\` and `venv-rvc\`.
+- **Bootstrap fix**: rerun `tools\portable_installer\bootstrap.py` with `--install-dependencies`.
 
 #### Models not downloading automatically
 - **Check internet connection**
-- **Manually download**:
-  - Demucs: [Facebook Research](https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/)
-  - ChatterBox: Loaded from HuggingFace automatically
-- **Place in**: `C:\Users\[YourName]\AppData\Local\VoiceRevolverAI\models\`
+- **Installed app**: check selected model folder in `config\portable.json`.
+- **Development app**: default model folder is `%LOCALAPPDATA%\VoiceRevolverAI\models\`.
+- **Headless check**: rerun bootstrap with `--download-models` and inspect the JSONL log.
 
 #### Slow processing even with GPU
 - **Verify GPU is being used**: Check Task Manager → Performance → GPU
@@ -584,10 +685,11 @@ See **[Troubleshooting](#troubleshooting)** for common GPU issues.
 
 ### Still Having Issues?
 
-1. **Check logs**: `C:\Users\[YourName]\AppData\Local\VoiceRevolverAI\logs\app.log`
-2. **Read**: [AGENT_MEMORY.md](AGENT_MEMORY.md) - Critical Lessons Learned section
-3. **Open an issue**: [GitHub Issues](https://github.com/JeroTan/voice-revolver-local-ai/issues)
-4. **Include**:
+1. **Check app logs**: `%LOCALAPPDATA%\VoiceRevolverAI\logs\app.log`
+2. **Check installer logs**: `%LOCALAPPDATA%\VoiceRevolverAI\logs\installer-bootstrap.jsonl`
+3. **Read**: [AGENT_MEMORY.md](AGENT_MEMORY.md) - Critical Lessons Learned section
+4. **Open an issue**: [GitHub Issues](https://github.com/JeroTan/voice-revolver-local-ai/issues)
+5. **Include**:
    - Error message (full traceback)
    - Python version: `python --version`
    - GPU info: `nvidia-smi` output (if using GPU)
@@ -613,7 +715,7 @@ We welcome contributions! Voice Revolver AI is actively developed and looking fo
 
 - **UI/UX improvements** - Better layouts, dark mode, accessibility
 - **Mac/Linux support** - Port to macOS and Linux
-- **Portable .exe packaging** - PyInstaller/Nuitka build scripts
+- **Installer hardening** - full clean-machine tests, dependency manifests, UAC flow, model verification
 - **Documentation** - Tutorials, videos, translations
 - **Testing** - Unit tests, integration tests, bug reports
 - **New features** - See [Issues](https://github.com/JeroTan/voice-revolver-local-ai/issues) for ideas

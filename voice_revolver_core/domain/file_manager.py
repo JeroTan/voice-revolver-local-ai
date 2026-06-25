@@ -6,6 +6,7 @@ Handles temp files, export workflow, and file naming
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
+import os
 
 from .base import ErrorCode, generate_auto_filename
 
@@ -27,7 +28,7 @@ class FileManager:
     
     def __init__(self, app_data_path: Path):
         self._app_data_path = app_data_path
-        self._temp_path = app_data_path / "temp"
+        self._temp_path = Path(os.environ.get("VOICE_REVOLVER_TEMP_DIR", app_data_path / "temp"))
         self._exports_path = app_data_path / "exports"
     
     @property

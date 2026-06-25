@@ -14,6 +14,10 @@ eggs/
 .eggs/
 lib/
 lib64/
+!rvc/lib/
+!rvc/lib/**/
+!rvc/lib/**/*.py
+!rvc/lib/**/*.json
 parts/
 sdist/
 var/

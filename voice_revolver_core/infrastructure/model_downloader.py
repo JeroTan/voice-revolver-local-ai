@@ -22,7 +22,11 @@ class ModelDownloader:
             cache_dir: Directory to cache models (default: ./models)
         """
         if cache_dir is None:
-            cache_dir = Path(__file__).parent.parent.parent / "models" / "chatterbox"
+            model_root = os.environ.get("VOICE_REVOLVER_MODEL_DIR")
+            if model_root:
+                cache_dir = Path(model_root) / "chatterbox"
+            else:
+                cache_dir = Path(__file__).parent.parent.parent / "models" / "chatterbox"
         
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)

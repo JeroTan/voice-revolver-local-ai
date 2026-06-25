@@ -12,6 +12,12 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+try:
+    from voice_revolver_core.infrastructure.portable_paths import load_portable_paths
+    load_portable_paths(create=True)
+except Exception:
+    pass
+
 # Import Applio's VoiceConverter
 from rvc.infer.infer import VoiceConverter
 

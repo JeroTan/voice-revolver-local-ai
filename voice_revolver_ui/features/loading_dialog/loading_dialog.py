@@ -7,6 +7,7 @@ Shows progress of FFmpeg setup and AI model downloads.
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
+from pathlib import Path
 
 from voice_revolver_core.infrastructure.ffmpeg_checker import FFmpegChecker
 from voice_revolver_core.infrastructure.model_manager import ModelManager
@@ -15,9 +16,10 @@ from voice_revolver_core.infrastructure.model_manager import ModelManager
 class LoadingDialog:
     """Model loading/download dialog"""
     
-    def __init__(self, device, app_data_path):
+    def __init__(self, device, app_data_path, model_path=None):
         self.device = device
         self.app_data_path = app_data_path
+        self.model_path = Path(model_path) if model_path else Path(app_data_path) / "models"
         self.success = False
         self.error_message = ""
         
@@ -94,7 +96,7 @@ class LoadingDialog:
             # Step 2: Models
             self.window.after(0, self.update_progress, 30, "Checking AI models...", "Looking for cached models")
             
-            model_manager = ModelManager(self.app_data_path / "models")
+            model_manager = ModelManager(self.model_path)
             cache_status = model_manager.check_cache()
             
             if not all(cache_status.values()):
@@ -102,7 +104,6 @@ class LoadingDialog:
                 
                 # Friendly names for model types
                 model_names = {
-                    "openvoice": "OpenVoice",
                     "demucs": "Demucs",
                 }
                 
@@ -113,7 +114,9 @@ class LoadingDialog:
                 
                 # Run async download in sync context
                 import asyncio
-                asyncio.run(model_manager.download_all_models(download_callback))
+                success, error = asyncio.run(model_manager.download_all_models(download_callback))
+                if not success:
+                    raise RuntimeError(error or "Model download failed")
             
             self.window.after(0, self.update_progress, 90, "Loading complete!", "All dependencies ready")
             

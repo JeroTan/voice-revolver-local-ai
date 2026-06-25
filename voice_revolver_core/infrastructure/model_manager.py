@@ -24,6 +24,12 @@ class ModelManager:
     
     # Demucs model info (auto-downloaded by demucs package)
     DEMUCS_MODEL_NAME = "htdemucs_ft"
+    DEMUCS_CHECKPOINT_NAMES = {
+        "f7e0c4bc-ba3fe64a.th",
+        "d12395a8-e57c48e6.th",
+        "92cfc3b6-ef3bcb9c.th",
+        "04573f0d-f3cf25b2.th",
+    }
     
     # MDX model info (OPTIONAL - installed in separate venv-mdx)
     # See AGENT_MEMORY.md for MDX installation instructions
@@ -50,8 +56,9 @@ class ModelManager:
             self._downloaded_models.add("openvoice")
             logger.info("OpenVoice V2 checkpoints found in cache")
         
-        # Demucs models are downloaded by the package, we just check if package is available
-        self._downloaded_models.add("demucs")
+        demucs_checkpoint_dir = self._models_path / "torch" / "hub" / "checkpoints"
+        if all((demucs_checkpoint_dir / name).exists() for name in self.DEMUCS_CHECKPOINT_NAMES):
+            self._downloaded_models.add("demucs")
         
         # RVC models are bundled with the app (not auto-downloaded)
         # Embedders have their own wget download in rvc/lib/utils.py
@@ -94,27 +101,35 @@ class ModelManager:
         Download all required models.
         Returns: (success, error_message)
         """
-        models = [
-            ("openvoice", self._download_openvoice_models),
-        ]
-        
-        # Demucs is handled by the demucs package - just mark as available
+        success, error = await self._download_demucs_models(progress_callback)
+        if not success:
+            return False, f"Failed to download demucs: {error}"
         self._downloaded_models.add("demucs")
         
         # RVC models are bundled with the app - no auto-download needed
         
         # MDX is optional (separate venv-mdx), not auto-downloaded
-        
-        for model_name, download_func in models:
-            try:
-                success, error = await download_func(progress_callback)
-                if not success:
-                    return False, f"Failed to download {model_name}: {error}"
-                self._downloaded_models.add(model_name)
-            except Exception as e:
-                return False, str(e)
+
+        # OpenVoice is legacy/optional. Its upstream V2 checkpoint URL has become
+        # unreliable, so it must not block first-run setup or portable installs.
         
         return True, None
+
+    async def _download_demucs_models(
+        self,
+        progress_callback: Optional[Callable[[str, float], None]] = None
+    ) -> tuple[bool, Optional[str]]:
+        """Load Demucs model once so required checkpoints are present."""
+        self._notify_progress("demucs", 0.0, progress_callback)
+        try:
+            from demucs.pretrained import get_model
+
+            await asyncio.to_thread(get_model, self.DEMUCS_MODEL_NAME)
+            self._notify_progress("demucs", 1.0, progress_callback)
+            return True, None
+        except Exception as e:
+            logger.error(f"Failed to prepare Demucs model: {e}")
+            return False, str(e)
     
     async def _download_openvoice_models(
         self, 
@@ -196,11 +211,13 @@ class ModelManager:
     
     def check_cache(self) -> dict:
         """Check which models are cached"""
-        return {
+        status = {
             "demucs": "demucs" in self._downloaded_models,
-            "openvoice": "openvoice" in self._downloaded_models,
             # RVC models bundled with app, MDX is optional
         }
+        if "openvoice" in self._downloaded_models:
+            status["openvoice"] = True
+        return status
     
     def clear_cache(self) -> int:
         """Clear all cached models, return count deleted"""

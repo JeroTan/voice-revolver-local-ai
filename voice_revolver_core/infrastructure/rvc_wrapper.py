@@ -13,6 +13,7 @@ import tempfile
 import shutil
 import subprocess
 import sys
+import os
 
 from .venv_utils import get_venv_python
 
@@ -198,6 +199,16 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
             
             # Path to standalone RVC script
             standalone_script = Path(__file__).parent / "rvc_standalone.py"
+            project_root = Path(__file__).resolve().parents[2]
+            env = os.environ.copy()
+            try:
+                from .portable_paths import load_portable_paths
+                paths = load_portable_paths(create=True)
+                env["VOICE_REVOLVER_MODEL_DIR"] = str(paths.model_root)
+                env["VOICE_REVOLVER_RVC_MODEL_DIR"] = str(paths.model_root / "rvc")
+                env["VOICE_REVOLVER_VENV_DIR"] = str(paths.venv_root)
+            except Exception as exc:
+                logger.warning(f"Could not load portable paths for RVC subprocess: {exc}")
             
             # Path to RVC Python executable (dedicated venv-rvc environment)
             # This environment has RVC dependencies with numpy 1.23.5, isolated from main app
@@ -226,13 +237,17 @@ For now, please use Audio File mode with ChatterBox VC - it works great!"""
             ]
             
             logger.info(f"Running RVC subprocess: {' '.join(cmd)}")
+            python_path = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = str(project_root) if not python_path else f"{project_root}{os.pathsep}{python_path}"
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                timeout=600  # 10 minute timeout
+                timeout=600,  # 10 minute timeout
+                cwd=str(project_root),
+                env=env,
             )
             
             if result.returncode != 0:

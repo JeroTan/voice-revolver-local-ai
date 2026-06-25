@@ -38,6 +38,7 @@ from voice_revolver_core.infrastructure.demucs_wrapper import DemucsWrapper
 from voice_revolver_core.infrastructure.chatterbox_vc_wrapper import ChatterBoxVCWrapper
 from voice_revolver_core.infrastructure.audio_mixer import AudioMixer
 from voice_revolver_core.infrastructure.format_converter import FormatConverter
+from voice_revolver_core.infrastructure.portable_paths import load_portable_paths
 from voice_revolver_core.infrastructure.resemble_enhance_wrapper import is_resemble_enhance_available, enhance_vocals
 from voice_revolver_core.domain.file_manager import FileManager
 from voice_revolver_core.domain.progress_tracker import ProgressTracker
@@ -62,7 +63,7 @@ CURRENT_WORKSPACE = "vocal_changer"
 
 
 class VoiceRevolverApp:
-    def __init__(self, root, device, app_data_path):
+    def __init__(self, root, device, app_data_path, model_path=None):
         self.root = root
         self.root.title("Voice Revolver AI - Local Voice Replacement")
         
@@ -75,6 +76,7 @@ class VoiceRevolverApp:
         # Configuration
         self.device = device
         self.app_data_path = app_data_path
+        self.model_path = Path(model_path) if model_path else app_data_path / "models"
         
         # State
         self.original_file = None
@@ -142,9 +144,10 @@ class VoiceRevolverApp:
         self.log("Initializing Voice Revolver AI...")
         self.log(f"Device: {self.device.upper()}")
         self.log(f"App data path: {self.app_data_path}")
+        self.log(f"Model path: {self.model_path}")
         
         self.compute_controller = ComputeController()
-        self.model_manager = ModelManager(self.app_data_path / "models")
+        self.model_manager = ModelManager(self.model_path)
         self.ffmpeg_checker = FFmpegChecker(self.app_data_path)
         
         # Ensure ffmpeg is available (was configured in main(), but double-check)
@@ -2322,6 +2325,10 @@ class VoiceRevolverApp:
 
 def main():
     """Main entry point"""
+    paths = load_portable_paths(create=True)
+    app_data_path = paths.app_data_root
+    model_path = paths.model_root
+
     # Check Python version
     if sys.version_info[:2] != (3, 11):
         print(f"[WARNING] WARNING: Python 3.11.x required, you are using {sys.version}")
@@ -2336,14 +2343,6 @@ def main():
     except Exception as e:
         print(f"[WARNING] PyTorch preload warning: {e}")
     
-    # Get app data path
-    if sys.platform == "win32":
-        base = Path(os.environ.get('LOCALAPPDATA', Path.home()))
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path.home() / ".local" / "share"
-    app_data_path = base / "VoiceRevolverAI"
     app_data_path.mkdir(parents=True, exist_ok=True)
     
     # Configure FFmpeg EARLY (before any pydub/AI imports)
@@ -2408,7 +2407,7 @@ def main():
     logger.info(f"User selected device: {device}")
     
     # Step 2: Loading Dialog - Download models/FFmpeg
-    loading = LoadingDialog(device, app_data_path)
+    loading = LoadingDialog(device, app_data_path, model_path)
     success = loading.show()
     
     if not success:
@@ -2419,7 +2418,7 @@ def main():
     
     # Step 3: Main Window
     root = tk.Tk()
-    app = VoiceRevolverApp(root, device, app_data_path)
+    app = VoiceRevolverApp(root, device, app_data_path, model_path)
     root.mainloop()
     
     logger.info("Application closed")

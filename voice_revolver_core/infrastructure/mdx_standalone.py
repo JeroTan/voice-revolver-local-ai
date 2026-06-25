@@ -63,9 +63,18 @@ def separate_audio(audio_path: str, output_dir: str, model_name: str = "MDX23C-8
             else:
                 print(f"[MDX] {message}", file=sys.stderr, flush=True)
         
+        mdx_model_dir_env = os.environ.get("VOICE_REVOLVER_MDX_MODEL_DIR")
+        model_root_env = os.environ.get("VOICE_REVOLVER_MODEL_DIR")
+        if mdx_model_dir_env:
+            model_file_dir = Path(mdx_model_dir_env)
+        elif model_root_env:
+            model_file_dir = Path(model_root_env) / "mdx"
+        else:
+            model_file_dir = Path.home() / '.audio-separator' / 'models'
+
         # Initialize separator (auto-detects device from torch.cuda.is_available())
         separator = Separator(
-            model_file_dir=Path.home() / '.audio-separator' / 'models',
+            model_file_dir=model_file_dir,
             output_dir=output_dir,
             output_format='wav',
             normalization_threshold=0.9,

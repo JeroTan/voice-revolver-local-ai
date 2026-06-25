@@ -55,7 +55,8 @@ class RVCTrainingWrapper:
         
         # Paths
         self.project_root = Path(__file__).parent.parent.parent
-        self.temp_dir = app_data_path / "temp" / "audio_training" / model_name
+        temp_root = Path(os.environ.get("VOICE_REVOLVER_TEMP_DIR", app_data_path / "temp"))
+        self.temp_dir = temp_root / "audio_training" / model_name
         self.input_dir = self.temp_dir / "input_audio"
         # Use temp directory for RVC logs/training artifacts (not project root)
         self.logs_dir = self.temp_dir / "logs"
@@ -309,7 +310,15 @@ class RVCTrainingWrapper:
         sample_rate = params["sample_rate"]
         # Sample rate in filenames uses shorthand: 40000 -> 40k
         sr_short = f"{sample_rate // 1000}k"  # e.g., "40k", "48k", "32k"
-        pretrain_dir = self.project_root / "rvc" / "models" / "pretraineds" / "hifi-gan"
+        rvc_model_root = Path(os.environ.get(
+            "VOICE_REVOLVER_RVC_MODEL_DIR",
+            os.environ.get("VOICE_REVOLVER_MODEL_DIR", "")
+        ))
+        if rvc_model_root and rvc_model_root.name != "rvc":
+            rvc_model_root = rvc_model_root / "rvc"
+        configured_pretrain_dir = rvc_model_root / "pretraineds" / "hifi-gan" if rvc_model_root else None
+        project_pretrain_dir = self.project_root / "rvc" / "models" / "pretraineds" / "hifi-gan"
+        pretrain_dir = configured_pretrain_dir if configured_pretrain_dir and configured_pretrain_dir.exists() else project_pretrain_dir
         pretrain_g = pretrain_dir / f"f0G{sr_short}.pth"
         pretrain_d = pretrain_dir / f"f0D{sr_short}.pth"
         

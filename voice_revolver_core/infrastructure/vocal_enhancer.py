@@ -4,8 +4,6 @@ Cleans and enhances vocal audio quality while preserving original loudness
 """
 
 import numpy as np
-import librosa
-import soundfile as sf
 from pathlib import Path
 from typing import Optional, Tuple
 import logging
@@ -72,6 +70,9 @@ class VocalEnhancer:
             return output_path, None
         
         try:
+            import librosa
+            import soundfile as sf
+
             logger.info(f"Enhancing vocal: {input_path}")
             
             # 1. Load audio
@@ -212,6 +213,9 @@ class VocalEnhancer:
             return output_path, None
         
         try:
+            import librosa
+            import soundfile as sf
+
             logger.info(f"Denoising audio (subtle): {input_path}")
             
             # 1. Load audio

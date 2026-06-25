@@ -6,8 +6,8 @@
 
 Voice Revolver AI - A local-first desktop application for vocal replacement in songs. Uses AI (Demucs + ChatterBox VC) to separate vocals from a song and replace them with a reference voice. Built with DDD architecture for modularity.
 
-**Current State:** Audio Training workspace complete - RVC model training functional on Windows single-GPU
-**Goal:** Portable desktop app (Windows .exe, Mac .app)
+**Current State:** Stable multi-workspace Windows app. Audio Training workspace complete. Portable installer/bootstrap first pass implemented and headless-tested at `D:\sample` / `D:\sample2`; `run_dev.bat` remains the stable baseline.
+**Goal:** Windows installer that installs `voice-revolver.exe` and preserves the exact `run_dev.bat` app flow. Mac `.app` remains future work.
 
 ---
 
@@ -26,7 +26,7 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 6. **FileManager** - Temp files, export workflow, auto-naming (date_time_random)
 7. **ProgressTracker** - Track progress with unique keys for polling
 8. **ErrorCode** - Global error system (code: "WHAT_HAPPENED")
-9. **ModelManager** - Auto-download models on first startup
+9. **ModelManager** - Checks/downloads required model caches on first startup; OpenVoice is legacy optional
 10. **ProjectService** - Save/load .vra project files
 
 ### Tech Stack
@@ -34,16 +34,16 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
   - **CRITICAL:** All AI tools (Demucs, RVC, MDX, Resemble Enhance) use Python 3.11
   - Python 3.14 lacks CUDA-enabled PyTorch builds (CPU-only as of Feb 2026)
   - Always create virtual environments with Python 3.11 for AI/ML features
-  - Main venvs: `.venv-1` (app), `venv-rvc` (RVC), `venv-mdx` (MDX), `venv-enhance` (Resemble)
+  - Main venvs: `venv` (app), `venv-rvc` (RVC), `venv-mdx` (MDX), `venv-enhance` (Resemble)
 - **UI Framework:** tkinter (native Python)
 - **ML Models:** Demucs, ChatterBox VC (OpenVoice V2 legacy)
 - **Audio:** pydub, FFmpeg (bundled + auto-download), pygame (preview)
 - **Audio Enhancement:** noisereduce, pedalboard, pyloudnorm
-- **Packaging:** PyInstaller/Nuitka (portable EXE)
+- **Packaging:** PyInstaller setup/launcher flow via `tools/build_installer.py`; installed app entrypoint is `voice-revolver.exe`
 
 ### Key Features
 - Local processing (no cloud)
-- Auto-download models on first launch
+- Check/download required model caches on first launch
 - Preview with play/pause/seek
 - Export with custom naming + folder selection
 - GPU/CPU selection (auto-detect + user override)
@@ -55,12 +55,28 @@ Voice Revolver AI - A local-first desktop application for vocal replacement in s
 
 ## Development Commands
 
-```bash
-# Run the application
-./run.bat
+```powershell
+# Stable development runner
+.\run_dev.bat
 
-# Activate virtual environment manually
-& F:\dev\Python\voice-revolver-local-ai\.venv-1\Scripts\Activate.ps1
+# Manual equivalent
+.\venv\Scripts\python.exe run.py
+
+# Build portable setup + installed launcher
+.\venv\Scripts\python.exe tools\build_installer.py
+
+# Validate installed launcher without opening UI after bootstrap/install
+D:\sample\voice-revolver.exe --validate-only
+
+# Validate built setup payload without opening UI
+$p = Start-Process -FilePath .\dist\VoiceRevolverAI-Setup.exe -ArgumentList '--validate-only' -Wait -PassThru
+$p.ExitCode
+
+# Headless installer prompt test
+.\venv\Scripts\python.exe tools\portable_installer\bootstrap.py --dry-run --interactive
+
+# Full headless installer-engine test
+.\venv\Scripts\python.exe tools\portable_installer\bootstrap.py --install-root D:\sample --model-root D:\sample2 --shortcut --install-dependencies --download-models --install-scoop --launcher-exe F:\dev\Python\voice-revolver-local-ai\dist\voice-revolver.exe --log-path C:\Users\jerow\AppData\Local\VoiceRevolverAI\logs\codex-headless-d-sample.jsonl
 ```
 
 ---
@@ -630,14 +646,13 @@ mute_base_path = os.path.join(current_directory, "temp", "mute")  # Updated from
 
 ### 2026-04-18 | Virtual Environment Recovery and Python 3.11 Standardization
 - **Topic:** Diagnosed and fixed a complete app crash caused by mixed Python environment DLLs.
-- **Issue:** The main env was somehow created with Python 3.10, but it contained a Python 3.11 PyTorch build (cp311). This caused a silent [WinError 126] The specified module could not be found when loading 	orch_python.dll. 
+- **Issue:** The main `venv` was somehow created with Python 3.10, but it contained a Python 3.11 PyTorch build (cp311). This caused silent `[WinError 126] The specified module could not be found` when loading `torch_python.dll`.
 - **Action Taken:**
   1. Backed up corrupted environment to ./old/venv_backup.
-  2. Strictly enforced the Python Environment Standard (from 2026-02-21) by wiping the corrupted env and rebuilding it purely with **Python 3.11.x**.
-  3. Re-installed PyTorch 2.1.2+cu118 and handled a strict dependency conflict with chatterbox-tts (which mistakenly required 	orch==2.6.0).
+  2. Strictly enforced the Python Environment Standard (from 2026-02-21) by wiping the corrupted `venv` and rebuilding it purely with **Python 3.11.x**.
+  3. Re-installed PyTorch 2.1.2+cu118 and handled a strict dependency conflict with chatterbox-tts (which mistakenly required `torch==2.6.0`).
   4. Ran patch_dataclass_bugs.py to fix the hydra mutable defaults bug that breaks Demucs on Python 3.11.
-- **Key Takeaway:** If 
-un.bat crashes immediately, check env/pyvenv.cfg to ensure it is **exactly** Python 3.11.x, and never mix cp310 and cp311 wheels. Also, remember to run patch_dataclass_bugs.py anytime the env is rebuilt from scratch!
+- **Key Takeaway:** If `run_dev.bat` crashes immediately, check `venv/pyvenv.cfg` to ensure it is **exactly** Python 3.11.x, and never mix cp310 and cp311 wheels. Also run `patch_dataclass_bugs.py` anytime `venv` is rebuilt from scratch.
 
 ### 2026-02-22 | Workspace Temp Directory Structure
 - **Topic:** Implemented workspace-prefixed temp directory organization for multi-workspace support
@@ -764,7 +779,7 @@ un.bat crashes immediately, check env/pyvenv.cfg to ensure it is **exactly** Py
 - **Key Findings:**
   - **venv-mdx** (Python 3.11.9): PyTorch 2.1.2+cu118 ✅ CUDA working
   - **venv-rvc** (Python 3.11.9): PyTorch 2.10.0+cpu ❌ CPU only (needs reinstall)
-  - **.venv-1** (Python 3.14.0): No torch, main app
+  - **Historical only:** old Python 3.14.0 main app env had no torch; current main app env is `venv` on Python 3.11.x
   - **venv-enhance** (Python 3.11.9): ✅ CUDA working - PyTorch 2.1.1+cu118, DeepSpeed 0.16.5
 - **Issue:** Python 3.14.0 only has CPU-only PyTorch builds (no CUDA as of Feb 2026)
 - **Decision:** Always use Python 3.11.x for AI/ML virtual environments
@@ -2445,13 +2460,112 @@ voice_revolver_core/
 
 ---
 
+### 2026-06-24 | Portable Installer / Launcher First Pass
+- **Topic:** Started portability work so stable repo can become installer -> installed `voice-revolver.exe`.
+- **Source of truth:** `run_dev.bat` is still the stable baseline. It activates `venv`, prints Python version, then runs `.\venv\Scripts\python.exe run.py`. If `run_dev.bat` works but `voice-revolver.exe` fails, packaging/launcher broke. If both fail, core app regressed.
+- **Task guide:** `TASKLIST_PORTABLE.md` is the portable-app checklist for future agents. Do not mark final installer complete until unchecked UAC, model manifest, clean-machine install, and real UI smoke-test items are handled.
+- **Installer artifacts:**
+  - `dist\VoiceRevolverAI-Setup.exe`
+  - `dist\VoiceRevolverAI-Setup-v1.0.0.exe`
+  - `dist\voice-revolver.exe`
+- **New tooling:**
+  - `tools\build_installer.py` builds setup and launcher artifacts.
+  - `tools\portable_installer\bootstrap.py` is the headless bootstrap engine.
+  - `tools\portable_installer\installer_gui.py` is the Tkinter installer UI.
+  - `tools\portable_installer\launcher.py` is the installed app entrypoint.
+  - `tools\portable_installer\path_config.py` keeps installer path config lightweight for PyInstaller.
+- **Portable path config:**
+  - `voice_revolver_core\infrastructure\portable_paths.py`
+  - Env vars: `VOICE_REVOLVER_APP_DATA`, `VOICE_REVOLVER_TEMP_DIR`, `VOICE_REVOLVER_MODEL_DIR`, `VOICE_REVOLVER_VENV_DIR`
+  - Also redirects `HF_HOME`, `HF_HUB_CACHE`, `TRANSFORMERS_CACHE`, `TORCH_HOME`, `XDG_CACHE_HOME`, RVC, and MDX cache/model paths.
+- **Dependency locks created from working envs:**
+  - `requirements-main.lock.txt`
+  - `requirements-rvc.lock.txt`
+  - `requirements-mdx.lock.txt`
+  - `requirements-enhance.lock.txt`
+  - Installer must use these instead of plain `requirements.txt`.
+- **Runtime path changes:**
+  - `main_tk.py` loads portable paths early and passes model root into dialogs/app.
+  - `LoadingDialog` accepts optional model path.
+  - `FileManager` respects `VOICE_REVOLVER_TEMP_DIR`.
+  - `model_downloader.py` uses selected model root for ChatterBox cache.
+  - `mdx_standalone.py` uses selected model root for audio-separator models.
+  - `rvc_training_wrapper.py` uses selected temp/model roots for training and pretrained assets.
+  - `audio_training/workspace.py` cleanup now uses configured temp path.
+- **Installer behavior now implemented:**
+  - asks install location
+  - defaults to `%ProgramFiles%\Voice Revolver AI`
+  - asks model/weights location
+  - asks desktop shortcut choice
+  - enables model-cache download during setup by default
+  - writes `config\portable.json`
+  - copies runtime-only app payload and bundled RVC weights
+  - runtime payload is allowlisted: `run.py`, `assets/`, `rvc/`, `voice_revolver_core/`, `voice_revolver_ui/`, lock files, and `tools\portable_installer\*.py`
+  - runtime payload excludes docs, `AGENT_MEMORY.md`, `TASKLIST_PORTABLE.md`, tests, samples, old files, and dev/build scripts
+  - can install Scoop/Python 3.11/dependency lock files
+  - emits JSONL progress logs
+  - offers `Run the app`, `Run and close`, and `Close` after success
+  - changes `Close` to `Cancel` during install; cancel kills the active subprocess tree and cleans current-run artifacts where safe
+- **OpenVoice status:**
+  - OpenVoice V2 checkpoint URL `https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_v2_0417.zip` returned 404 during 2026-06-24 test.
+  - ChatterBox remains primary voice conversion engine.
+  - `ModelManager.download_all_models()` no longer auto-downloads or requires OpenVoice.
+  - Installer/loading dialog now fail on required model download errors instead of silently succeeding.
+- **Regression fixed 2026-06-25:**
+  - Installed Demucs failed with `mutable default <class 'hydra.conf.JobConf.JobConfig.OverrideDirname'>...` because repo `venv` had a patched Hydra 1.0.7 file, while installer-created venv pulled official unpatched Hydra 1.0.7 from pip.
+  - Added `tools\portable_installer\compat_patches.py`; bootstrap applies Hydra Python 3.11 dataclass `field(default_factory=...)` patch after main env install and on skipped lock-matching envs.
+  - Main env validation now imports `demucs.pretrained`, not only top-level `demucs`, so Hydra breakage is caught during install.
+  - `ModelManager.download_all_models()` now actually loads Demucs `htdemucs_ft` to prefetch four checkpoint files into selected model root (`{model_root}\torch\hub\checkpoints`) instead of marking Demucs ready without weights.
+  - `venv_utils.get_venv_python()` now honors `VOICE_REVOLVER_VENV_DIR` even when installed app runs source `run.py`; this fixes `venv-enhance` detection at `D:\sample\venvs\venv-enhance`.
+  - Bootstrap conditionally repairs `setuptools==65.5.0` and `PyYAML==6.0.3` when recreated venv content is incomplete (`yaml.Dumper` or `_distutils_hack` missing).
+  - Bootstrap validates an existing venv with missing marker before reinstalling, then restores marker when imports pass.
+  - Installed model-download step failed with `OSError: cannot load library 'libsndfile.dll': error 0x7e` because importing `voice_revolver_core.infrastructure.model_manager` executed `voice_revolver_core/__init__.py`, which imported the application layer and `vocal_enhancer.py`, which loaded `soundfile` at module import time. Fixed by making application exports lazy in `voice_revolver_core/__init__.py` and lazy-loading `librosa`/`soundfile` inside `VocalEnhancer` methods.
+  - A partial/broken `soundfile==0.13.1` install can miss `_soundfile_data\libsndfile_x64.dll`. Bootstrap now validates `soundfile` in every env and reinstalls the locked `soundfile` wheel with `--force-reinstall --no-cache-dir --no-deps` when import fails.
+  - A lock hash alone is not enough: installed packages can drift after marker creation. Bootstrap now audits installed package versions against each lock before skipping a venv and reruns exact `pip install --no-deps -r <lock>` when drift is found. Verified by correcting `numpy==2.4.6` back to locked `numpy==1.23.5` in `D:\sample\venvs\venv`.
+  - Installed RVC conversion failed at Reference Voice processing with `FileNotFoundError: [Errno 2] No such file or directory: 'rvc\\models\\predictors\\rmvpe.pt'`. Stable repo worked because cwd had `rvc\models`; installer moved those assets to selected model root (`D:\sample2\rvc`) and installed app omitted `D:\sample\rvc\models`.
+  - Fixed RVC portability by adding `rvc.lib.utils.rvc_model_path()` and updating `rvc\lib\predictors\f0.py`, `rvc\lib\predictors\F0Extractor.py`, and `rvc\lib\tools\pretrained_selector.py` to resolve assets from `VOICE_REVOLVER_RVC_MODEL_DIR` / `VOICE_REVOLVER_MODEL_DIR\rvc` with repo fallback.
+  - `RVCWrapper.convert_voice()` now loads portable paths before `get_venv_python('venv-rvc')`, passes portable model/venv env vars to subprocess, sets `PYTHONPATH`, and runs subprocess with `cwd` at installed project root.
+  - Bootstrap now validates required RVC assets in chosen model root: `predictors\rmvpe.pt`, `predictors\fcpe.pt`, `embedders\contentvec\config.json`, `embedders\contentvec\pytorch_model.bin`.
+- **Unresolved follow-up 2026-06-25 11:38 (no coding yet per user):**
+  - User retested Reference Voice processing in installed app with `F:\temp\hanni.zip`; UI still showed `ErrorCode.VOICE_CONVERT_FAILED: Voice conversion failed`.
+  - Latest log shows this failure is not the previous missing `rmvpe.pt` path bug. RVC model zip load failed before conversion with: `RVC model load error: No .pth model file found in zip`.
+  - Next session should inspect `F:\temp\hanni.zip` structure and compare expected RVC zip layout against stable-version behavior. Current `RVCWrapper.load_model_from_zip()` only searches top-level `*.pth` and `*.index` after `zip_ref.extractall(self._temp_dir)`, so nested-folder zips may fail even when valid.
+  - User later clarified the installed workflow is actually working enough for this release. Treat the `hanni.zip` note as a future hardening check, not a release blocker.
+  - If revisiting: first step should be read-only: list zip contents, verify whether `.pth` exists nested, then decide whether to support recursive model discovery.
+- **Validation already run:**
+  - Python compile check on modified Python files passed.
+  - Bootstrap dry-run passed.
+  - Interactive prompt dry-run passed.
+  - Full local bootstrap simulation passed using `D:\sample` install root and `D:\sample2` model root.
+  - Full local bootstrap re-test passed after simulated missing `libsndfile_x64.dll`; setup repaired `soundfile==0.13.1`.
+  - Full local bootstrap re-test passed after simulated dependency drift; setup repaired exact lock versions.
+  - Installed RVC predictor test loaded `D:\sample2\rvc\predictors\rmvpe.pt` from `D:\sample\venvs\venv-rvc`.
+  - Installed RVC wrapper conversion smoke test using `F:\temp\Hatsune Miku VX - Weights Model.zip` produced `converted.wav`.
+  - `D:\sample\voice-revolver.exe --validate-only` passed.
+  - `dist\VoiceRevolverAI-Setup.exe --validate-only` passed after 2026-06-25 11:07 rebuild.
+  - Installed Demucs wrapper `load_model()` passed from `D:\sample\venvs\venv`.
+  - Tiny installed Demucs separation smoke test passed and produced `drums`, `bass`, `other`, `vocals`.
+  - Installed Resemble Enhance availability check returned true through `D:\sample\venvs\venv-enhance\Scripts\python.exe`.
+  - `.env`, docs, agent memory, tasklist, tests, samples, old files, and dev/build scripts excluded from staged installer payload.
+  - `D:\sample` top-level was trimmed to runtime contents only.
+- **Known gaps / do not forget:**
+  - Full clean-machine install with dependency download has not been completed.
+  - Real installer GUI click-through and actual UI launch from installed app still need manual smoke test.
+  - UAC/admin elevation flow is not fully implemented.
+  - Model manifest sizes/checksums and repair UX are still missing.
+  - `dist\voice-revolver.exe` is only the launcher binary. It is not a standalone installed app unless copied beside installed app files/config.
+  - Existing main env has ChatterBox transitive dependency drift. Do not blindly upgrade Torch/Transformers; that can break stable app. Solve with isolated lock-compatible dependency review.
+- **README updated:** README now documents `run_dev.bat`, installer artifacts, bootstrap tests, lock files, and troubleshooting paths.
+
+---
+
 ## Patterns & Conventions
 
 ### Code Structure
 - DDD layers: domain/, application/, infrastructure/, interface/
 - Core logic in domain layer (no external dependencies)
 - Application layer orchestrates use cases
-- Infrastructure handles external tools (Demucs, OpenVoice, FFmpeg)
+- Infrastructure handles external tools (Demucs, ChatterBox, FFmpeg, legacy OpenVoice)
 
 ### File Naming
 - snake_case for Python files
@@ -2463,10 +2577,12 @@ voice_revolver_core/
 - All errors logged with context
 
 ### Data Storage
-- App data: {user_documents}/VoiceRevolverAI/
-- Models: {app_data}/models/
-- Temp: {app_data}/temp/ (auto-cleanup)
-- Logs: {app_data}/logs/app.log
+- Default app data: `%LOCALAPPDATA%/VoiceRevolverAI/`
+- Installed config: `{install_root}/config/portable.json`
+- Models: installer-selected model root, default `%LOCALAPPDATA%/VoiceRevolverAI/models/`
+- Temp: `VOICE_REVOLVER_TEMP_DIR` or `%LOCALAPPDATA%/VoiceRevolverAI/temp/` (auto-cleanup)
+- Logs: `%LOCALAPPDATA%/VoiceRevolverAI/logs/app.log`
+- Venv root: `VOICE_REVOLVER_VENV_DIR`, usually install root for installed app or repo root for development
 
 ### Project Format
 - .vra files (JSON-based, single file)
